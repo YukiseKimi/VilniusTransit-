@@ -7,10 +7,18 @@ Core Animation, Core Text, Compression. **No third-party dependencies.**
 ```bash
 swift test                  # 53 tests, no network
 ./Scripts/check-ipad.sh     # type-checks the shared targets for iPadOS
-./Scripts/build-app.sh      # -> build/VilniusTransit.app
+./Scripts/build-app.sh      # Mac -> build/VilniusTransit.app
 swift run feedcheck         # live feed diagnostic, no GUI
 swift run feedcheck gtfs    # downloads the archive and reports the join
+
+# iPad — SwiftPM cannot emit an iOS app bundle, so this is a real Xcode project
+# that references the package locally.
+open iPad/VilniusTransitPad.xcodeproj
 ```
+
+Both apps run the same `VilniusTransitUI` code. The iPad app target is 20 lines and
+the Mac one is 44; if either grows much, something that should have been shared
+was not.
 
 ## What works
 
@@ -27,8 +35,12 @@ swift run feedcheck gtfs    # downloads the archive and reports the join
 - Status bar reporting poll health, rows skipped, and how many polls returned 304
 
 Measured on a Mac, full city view, all 383 vehicles and the timetable loaded:
-**~12% CPU, ~230 MB**. iPad numbers are not yet measured and should not be assumed
-from these.
+**~12% CPU, ~230 MB**.
+
+The iPad build runs and joins correctly in the simulator (384 vehicles, 375 joined),
+but **simulator numbers are not device numbers** — it executes on Mac hardware with
+different memory accounting and no thermal limit. Treat iPad performance as
+unmeasured until it runs on real hardware.
 
 ## Data
 
@@ -219,7 +231,7 @@ None of these are ports; they are decisions that differ by platform.
 
 - **Every performance number here is a Mac number.** The 20 fps tick driving ~250
   KVO-backed annotation moves is exactly the shape of thing that costs battery.
-  Measure on device before believing any of it.
+  The simulator cannot answer this; measure on real hardware before believing it.
 - **Background execution.** macOS polls while the window is open; iPadOS suspends
   the app. A proximity alert cannot be a local timer there — it needs server push.
 - **Cellular.** 47 KB every 5 s is ~34 MB/hour, and the GTFS archive is another

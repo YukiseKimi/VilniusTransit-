@@ -40,6 +40,15 @@ enum Platform {
         #endif
     }
 
+    /// How the user actually selects something, for use in copy.
+    static var selectVerb: String {
+        #if os(macOS)
+        return "Click"
+        #else
+        return "Tap"
+        #endif
+    }
+
     /// Hit-target padding around a marker.
     ///
     /// A 10 pt station dot is fine for a cursor and far too small for a fingertip,

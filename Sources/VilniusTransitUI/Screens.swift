@@ -220,7 +220,7 @@ struct VehicleInspector: View {
                 ContentUnavailableView(
                     "No vehicle selected",
                     systemImage: "bus",
-                    description: Text("Click any marker on the map.")
+                    description: Text("\(Platform.selectVerb) any marker on the map.")
                 )
             }
         }
