@@ -6,17 +6,19 @@ import VilniusTransitKit
 /// Owns the live fleet and the user's filters. The map owns motion; this owns data.
 @MainActor
 @Observable
-final class FleetModel {
+public final class FleetModel {
+
+    public init() {}
 
     /// What the static timetable is doing, shown in the status bar so a failed or
     /// still-loading catalog is visible rather than silently degrading the map.
-    enum CatalogStatus: Equatable {
+    public enum CatalogStatus: Equatable {
         case loading
         case ready(trips: Int, shapes: Int, fromCache: Bool)
         case failed(String)
     }
 
-    enum Status: Equatable {
+    public enum Status: Equatable {
         case idle
         case live
         case unchanged
@@ -25,39 +27,39 @@ final class FleetModel {
     }
 
     // Feed state
-    private(set) var vehicles: [Vehicle] = []
-    private(set) var status: Status = .idle
-    private(set) var lastUpdate: Date?
-    private(set) var lastByteCount = 0
-    private(set) var skippedRows = 0
+    public private(set) var vehicles: [Vehicle] = []
+    public private(set) var status: Status = .idle
+    public private(set) var lastUpdate: Date?
+    public private(set) var lastByteCount = 0
+    public private(set) var skippedRows = 0
     /// How many polls the server answered 304 — i.e. bandwidth the app did not spend.
-    private(set) var notModifiedCount = 0
-    private(set) var pollCount = 0
+    public private(set) var notModifiedCount = 0
+    public private(set) var pollCount = 0
     /// Bumped on every accepted snapshot; the map uses it to skip redundant work.
-    private(set) var snapshotToken = 0
+    public private(set) var snapshotToken = 0
 
     // Static timetable
-    private(set) var catalog: GTFSCatalog = .empty
-    private(set) var catalogStatus: CatalogStatus = .loading
+    public private(set) var catalog: GTFSCatalog = .empty
+    public private(set) var catalogStatus: CatalogStatus = .loading
     /// Bumped when the catalog arrives so the map re-resolves every annotation.
-    private(set) var catalogToken = 0
+    public private(set) var catalogToken = 0
 
     // Filters. Each recomputes derived state once, rather than leaving O(n) work
     // in computed properties that SwiftUI re-evaluates on every body pass.
-    var enabledModes: Set<TransitMode> = Set(TransitMode.allCases) { didSet { recompute() } }
-    var showOutOfService = true { didSet { recompute() } }
-    var routeQuery = "" { didSet { recomputeRoutes() } }
-    var selectedRoute: String? { didSet { recompute() } }
-    var selectedFleetNumber: String?
+    public var enabledModes: Set<TransitMode> = Set(TransitMode.allCases) { didSet { recompute() } }
+    public var showOutOfService = true { didSet { recompute() } }
+    public var routeQuery = "" { didSet { recomputeRoutes() } }
+    public var selectedRoute: String? { didSet { recompute() } }
+    public var selectedFleetNumber: String?
 
     // Derived state, recomputed when data or filters move — never per render.
-    private(set) var filteredVehicles: [Vehicle] = []
-    private(set) var routeSummaries: [RouteSummary] = []
-    private(set) var joinedCount = 0
-    private(set) var onTimePercentage: Double?
+    public private(set) var filteredVehicles: [Vehicle] = []
+    public private(set) var routeSummaries: [RouteSummary] = []
+    public private(set) var joinedCount = 0
+    public private(set) var onTimePercentage: Double?
     private var modeCounts: [TransitMode: Int] = [:]
 
-    let pollInterval: TimeInterval = 5
+    public let pollInterval: TimeInterval = 5
 
     private var client: VehicleFeedClient?
     private var pumpTask: Task<Void, Never>?
@@ -67,7 +69,7 @@ final class FleetModel {
     // MARK: - Derived
 
     /// Identifies (data, filters) so the map re-ingests when either moves.
-    var dataToken: Int {
+    public var dataToken: Int {
         var hasher = Hasher()
         hasher.combine(snapshotToken)
         hasher.combine(catalogToken)
@@ -77,33 +79,33 @@ final class FleetModel {
         return hasher.finalize()
     }
 
-    var selectedVehicle: Vehicle? {
+    public var selectedVehicle: Vehicle? {
         guard let selectedFleetNumber else { return nil }
         return vehicles.first { $0.id == selectedFleetNumber }
     }
 
-    func count(of mode: TransitMode) -> Int { modeCounts[mode] ?? 0 }
+    public func count(of mode: TransitMode) -> Int { modeCounts[mode] ?? 0 }
 
-    func resolved(_ vehicle: Vehicle) -> GTFSRoute? { catalog.route(forVehicle: vehicle) }
+    public func resolved(_ vehicle: Vehicle) -> GTFSRoute? { catalog.route(forVehicle: vehicle) }
 
-    func shape(for vehicle: Vehicle) -> [CLLocationCoordinate2D]? {
+    public func shape(for vehicle: Vehicle) -> [CLLocationCoordinate2D]? {
         guard let tripID = vehicle.gtfsTripID else { return nil }
         return catalog.shape(forTrip: tripID)
     }
 
     /// Stations this vehicle's current trip calls at, in order.
-    func stations(for vehicle: Vehicle) -> [GTFSStation] {
+    public func stations(for vehicle: Vehicle) -> [GTFSStation] {
         guard let tripID = vehicle.gtfsTripID else { return [] }
         return catalog.stations(forTrip: tripID)
     }
 
-    struct RouteSummary: Identifiable, Hashable {
-        var id: String { name }
-        let name: String
-        let mode: TransitMode
-        let vehicleCount: Int
-        let colorHex: String?
-        let longName: String?
+    public struct RouteSummary: Identifiable, Hashable {
+        public var id: String { name }
+        public let name: String
+        public let mode: TransitMode
+        public let vehicleCount: Int
+        public let colorHex: String?
+        public let longName: String?
     }
 
     /// One pass over the fleet producing everything the UI reads.
@@ -173,7 +175,7 @@ final class FleetModel {
 
     // MARK: - Lifecycle
 
-    func loadCatalog() {
+    public func loadCatalog() {
         guard catalogTask == nil else { return }
         catalogTask = Task { [weak self] in
             guard let self else { return }
@@ -203,7 +205,7 @@ final class FleetModel {
         catalogToken &+= 1
     }
 
-    func start() {
+    public func start() {
         loadCatalog()
         guard pumpTask == nil else { return }
         let client = VehicleFeedClient(pollInterval: .seconds(Int(pollInterval)))
@@ -217,7 +219,7 @@ final class FleetModel {
         }
     }
 
-    func stop() {
+    public func stop() {
         pumpTask?.cancel()
         pumpTask = nil
         let client = self.client

@@ -1,6 +1,27 @@
-import AppKit
+import CoreGraphics
 import MapKit
+import QuartzCore
 import VilniusTransitKit
+
+#if canImport(AppKit)
+import AppKit
+#endif
+#if canImport(UIKit)
+import UIKit
+#endif
+
+extension MKAnnotationView {
+    /// `NSView.layer` is optional and needs `wantsLayer`; `UIView.layer` never is.
+    /// The only structural difference between the two platforms in this target.
+    var hostLayer: CALayer {
+        #if canImport(AppKit)
+        if layer == nil { wantsLayer = true }
+        return layer!
+        #else
+        return layer
+        #endif
+    }
+}
 
 /// One annotation per fleet number, kept alive across polls.
 ///
@@ -77,16 +98,14 @@ final class VehicleAnnotationView: MKAnnotationView {
 
     override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
         super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
-        wantsLayer = true
         frame = CGRect(x: 0, y: 0, width: 44, height: 44)
         canShowCallout = true
         displayPriority = .required
 
-        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let host = hostLayer
         for sublayer in [arrowLayer, badgeLayer] {
-            sublayer.contentsScale = scale
             sublayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-            layer?.addSublayer(sublayer)
+            host.addSublayer(sublayer)
         }
         badgeLayer.bounds = CGRect(origin: .zero, size: MarkerImages.badgeSize)
         badgeLayer.position = CGPoint(x: 22, y: 22)
@@ -129,7 +148,7 @@ final class VehicleAnnotationView: MKAnnotationView {
         )
         arrowLayer.contents = MarkerImages.shared.arrow(fill: fill)
         // Out of service: still on the map, visibly not carrying anyone.
-        layer?.opacity = appearance.inService ? 1.0 : 0.45
+        hostLayer.opacity = appearance.inService ? 1.0 : 0.45
         zPriority = appearance.selected ? .max : .defaultUnselected
         CATransaction.commit()
     }

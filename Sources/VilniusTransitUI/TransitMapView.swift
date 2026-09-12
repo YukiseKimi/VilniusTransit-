@@ -2,13 +2,23 @@ import SwiftUI
 import MapKit
 import VilniusTransitKit
 
+#if os(macOS)
+typealias TransitMapRepresentable = NSViewRepresentable
+#else
+typealias TransitMapRepresentable = UIViewRepresentable
+#endif
+
 /// `MKMapView` wrapped for SwiftUI.
 ///
 /// SwiftUI's own `Map` rebuilds its content tree on every change, gives no view
 /// reuse, and offers no way to move a marker from one coordinate to another. With
 /// ~385 vehicles refreshing every few seconds that is the whole problem, so the map
-/// itself stays AppKit and everything around it stays SwiftUI.
-struct TransitMapView: NSViewRepresentable {
+/// itself stays `MKMapView` and everything around it stays SwiftUI.
+///
+/// Only the representable conformance differs between Mac and iPad — the coordinator
+/// below, which holds all the diffing, interpolation, culling and overlay logic, is
+/// identical on both.
+public struct TransitMapView: TransitMapRepresentable {
 
     var vehicles: [Vehicle]
     /// The static timetable. Empty until it loads; every use degrades to nil.
@@ -21,22 +31,52 @@ struct TransitMapView: NSViewRepresentable {
     var emphasis: MKStandardMapConfiguration.EmphasisStyle
     @Binding var selectedFleetNumber: String?
 
-    static let vilnius = CLLocationCoordinate2D(latitude: 54.6872, longitude: 25.2797)
+    public init(
+        vehicles: [Vehicle],
+        catalog: GTFSCatalog,
+        dataToken: Int,
+        glide: TimeInterval,
+        emphasis: MKStandardMapConfiguration.EmphasisStyle,
+        selectedFleetNumber: Binding<String?>
+    ) {
+        self.vehicles = vehicles
+        self.catalog = catalog
+        self.dataToken = dataToken
+        self.glide = glide
+        self.emphasis = emphasis
+        self._selectedFleetNumber = selectedFleetNumber
+    }
+
+    public static let vilnius = CLLocationCoordinate2D(latitude: 54.6872, longitude: 25.2797)
 
     /// Carries the route's published colour to the renderer.
-    final class RoutePolyline: MKPolyline {
+    public final class RoutePolyline: MKPolyline {
         var color: String?
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    public func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeNSView(context: Context) -> MKMapView {
+    #if os(macOS)
+    public func makeNSView(context: Context) -> MKMapView { makeMap(context: context) }
+    public func updateNSView(_ mapView: MKMapView, context: Context) { updateMap(mapView, context: context) }
+    public static func dismantleNSView(_ mapView: MKMapView, coordinator: Coordinator) { coordinator.detach() }
+    #else
+    public func makeUIView(context: Context) -> MKMapView { makeMap(context: context) }
+    public func updateUIView(_ mapView: MKMapView, context: Context) { updateMap(mapView, context: context) }
+    public static func dismantleUIView(_ mapView: MKMapView, coordinator: Coordinator) { coordinator.detach() }
+    #endif
+
+    private func makeMap(context: Context) -> MKMapView {
+        MarkerImages.shared.setScale(Platform.displayScale)
         let mapView = MKMapView()
         mapView.delegate = context.coordinator
         mapView.showsCompass = true
-        mapView.showsZoomControls = true
         mapView.showsScale = true
         mapView.isPitchEnabled = false
+        #if os(macOS)
+        // Mac gets on-screen zoom buttons; iPad users pinch.
+        mapView.showsZoomControls = true
+        #endif
         mapView.register(VehicleAnnotationView.self,
                          forAnnotationViewWithReuseIdentifier: VehicleAnnotationView.reuseIdentifier)
         mapView.register(StationAnnotationView.self,
@@ -50,7 +90,7 @@ struct TransitMapView: NSViewRepresentable {
         return mapView
     }
 
-    func updateNSView(_ mapView: MKMapView, context: Context) {
+    private func updateMap(_ mapView: MKMapView, context: Context) {
         context.coordinator.parent = self
 
         if let config = mapView.preferredConfiguration as? MKStandardMapConfiguration,
@@ -64,14 +104,10 @@ struct TransitMapView: NSViewRepresentable {
         context.coordinator.syncSelection(to: selectedFleetNumber)
     }
 
-    static func dismantleNSView(_ mapView: MKMapView, coordinator: Coordinator) {
-        coordinator.detach()
-    }
-
     // MARK: - Coordinator
 
     @MainActor
-    final class Coordinator: NSObject, MKMapViewDelegate {
+    public final class Coordinator: NSObject, MKMapViewDelegate {
         fileprivate var parent: TransitMapView
         private weak var mapView: MKMapView?
 
@@ -279,20 +315,24 @@ struct TransitMapView: NSViewRepresentable {
 
         // MARK: MKMapViewDelegate
 
-        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+        public func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             guard let route = overlay as? RoutePolyline else {
                 return MKOverlayRenderer(overlay: overlay)
             }
             let renderer = MKPolylineRenderer(polyline: route)
-            let color = route.color.flatMap(MarkerImages.color(hex:)) ?? .systemBlue
-            renderer.strokeColor = color.withAlphaComponent(0.85)
+            let color = route.color.flatMap(RGBA.init(hex:)) ?? RGBA(0.04, 0.52, 1.00)
+            #if os(macOS)
+            renderer.strokeColor = NSColor(cgColor: color.withAlpha(0.85).cgColor)
+            #else
+            renderer.strokeColor = UIColor(cgColor: color.withAlpha(0.85).cgColor)
+            #endif
             renderer.lineWidth = 5
             renderer.lineCap = .round
             renderer.lineJoin = .round
             return renderer
         }
 
-        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+        public func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             if let station = annotation as? StationAnnotation {
                 let view = mapView.dequeueReusableAnnotationView(
                     withIdentifier: StationAnnotationView.reuseIdentifier,
@@ -311,7 +351,7 @@ struct TransitMapView: NSViewRepresentable {
             return view
         }
 
-        func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
+        public func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
             // Clicking a stop shows its callout; it is not a vehicle selection.
             if view.annotation is StationAnnotation { return }
             guard !isApplyingSelection, let annotation = view.annotation as? VehicleAnnotation else { return }
@@ -319,7 +359,7 @@ struct TransitMapView: NSViewRepresentable {
             (view as? VehicleAnnotationView)?.applyAppearance(annotation, selected: true)
         }
 
-        func mapView(_ mapView: MKMapView, didDeselect view: MKAnnotationView) {
+        public func mapView(_ mapView: MKMapView, didDeselect view: MKAnnotationView) {
             if view.annotation is StationAnnotation { return }
             guard !isApplyingSelection, let annotation = view.annotation as? VehicleAnnotation else { return }
             if parent.selectedFleetNumber == annotation.fleetNumber { parent.selectedFleetNumber = nil }

@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
         .library(name: "VilniusTransitKit", targets: ["VilniusTransitKit"]),
+        .library(name: "VilniusTransitUI", targets: ["VilniusTransitUI"]),
         .executable(name: "VilniusTransitApp", targets: ["VilniusTransitApp"]),
         .executable(name: "feedcheck", targets: ["feedcheck"]),
     ],
@@ -14,9 +15,17 @@ let package = Package(
             name: "VilniusTransitKit",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
+        // Everything the Mac and iPad apps share: model, map, markers, screens.
+        // Builds for both platforms; only the drawing shim and a handful of
+        // chrome affordances are conditional.
+        .target(
+            name: "VilniusTransitUI",
+            dependencies: ["VilniusTransitKit"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .executableTarget(
             name: "VilniusTransitApp",
-            dependencies: ["VilniusTransitKit"],
+            dependencies: ["VilniusTransitKit", "VilniusTransitUI"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .executableTarget(

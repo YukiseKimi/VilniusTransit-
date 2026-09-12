@@ -1,11 +1,12 @@
 # Vilnius Transit — spike
 
-A macOS app showing Vilnius buses, trolleybuses and ferries moving live on a map.
-Native frameworks only: MapKit, SwiftUI, AppKit, Foundation, Network, Core Animation.
-**No third-party dependencies.**
+A Mac and iPad app showing Vilnius buses, trolleybuses and ferries moving live on a
+map. Native frameworks only: MapKit, SwiftUI, Foundation, Network, Core Graphics,
+Core Animation, Core Text, Compression. **No third-party dependencies.**
 
 ```bash
 swift test                  # 53 tests, no network
+./Scripts/check-ipad.sh     # type-checks the shared targets for iPadOS
 ./Scripts/build-app.sh      # -> build/VilniusTransit.app
 swift run feedcheck         # live feed diagnostic, no GUI
 swift run feedcheck gtfs    # downloads the archive and reports the join
@@ -25,8 +26,9 @@ swift run feedcheck gtfs    # downloads the archive and reports the join
 - Menu bar extra with live fleet counts and fleet-wide on-time percentage
 - Status bar reporting poll health, rows skipped, and how many polls returned 304
 
-Measured on the full city view with all 383 vehicles and the timetable loaded:
-**~9% CPU, ~270 MB**.
+Measured on a Mac, full city view, all 383 vehicles and the timetable loaded:
+**~12% CPU, ~230 MB**. iPad numbers are not yet measured and should not be assumed
+from these.
 
 ## Data
 
@@ -67,8 +69,11 @@ Feed quirks the code already handles, each verified against live data:
 
 ## Architecture
 
+Three targets. The split is by platform reach, not by layer: everything that can be
+shared is, and the Mac-only target is deliberately tiny.
+
 ```
-VilniusTransitKit      no UI, fully testable
+VilniusTransitKit      no UI, fully testable, Mac + iPad
   Vehicle              decoded row + punctuality bucketing
   VehicleFeedParser    byte-level CSV scan, never throws on a bad row
   VehicleFeedClient    actor; polls, replays If-Modified-Since, backs off, NWPathMonitor
@@ -79,12 +84,40 @@ VilniusTransitKit      no UI, fully testable
   GTFSCatalog          routes / trips / shapes / stops + the trip join
   GTFSStore            actor; download, disk cache, conditional refresh
 
-VilniusTransitApp
-  TransitMapView       NSViewRepresentable over MKMapView
-  VehicleAnnotation    MKAnnotation + MKAnnotationView (appearance / motion split)
-  MarkerImages         Core Graphics art, cached by appearance
+VilniusTransitUI       all the app, Mac + iPad
   FleetModel           @Observable; owns data and filters
+  TransitMapView       NS/UIViewRepresentable over MKMapView, one shared Coordinator
+  VehicleAnnotation    MKAnnotation + MKAnnotationView (appearance / motion split)
+  StationAnnotation    stops on the selected vehicle's route
+  MarkerImages         Core Graphics art -> CGImage, cached by appearance
+  Screens              sidebar, inspector, status bar
+  Platform             every platform difference in this target, in one file
+
+VilniusTransitApp      Mac only — 60 lines
+  @main App + MenuBarExtra
 ```
+
+### What is actually platform-specific
+
+Verified by type-checking both shared targets against the iOS SDK
+(`Scripts/check-ipad.sh`), not by inspection. The entire divergence is:
+
+| | |
+|---|---|
+| Bold system font | `NSFont`/`UIFont`, toll-free bridged to `CTFont` |
+| Backing scale | `NSScreen.backingScaleFactor` / `UIScreen.scale` |
+| Representable | `makeNSView` / `makeUIView` — three lines each, same body |
+| `MKAnnotationView.layer` | optional on `NSView`, not on `UIView` |
+| Zoom controls | Mac shows buttons; iPad pinches |
+| Toggle style | checkbox on Mac, switch on iPad |
+| Search placement | `.sidebar` on Mac |
+| Hit targets | 24 pt for a cursor, 44 pt for a fingertip |
+
+Marker art is rendered straight to `CGImage` rather than through `NSImage` or
+`UIImage`. That is not a portability workaround: `CALayer.contents` wants a
+`CGImage` on both platforms anyway, so the platform image type was always a detour.
+Removing it took AppKit out of the drawing layer entirely and dropped resident
+memory by ~40 MB.
 
 ### Why MKMapView and not SwiftUI `Map`
 
@@ -92,7 +125,8 @@ SwiftUI's `Map` rebuilds its content tree on every change, offers no annotation 
 reuse, and gives no way to move a marker from one coordinate to another. With 385
 vehicles refreshing every few seconds that is the entire problem. `MKMapView` gives
 view recycling, KVO-driven repositioning, and visible-rect culling. Everything
-around the map stays SwiftUI.
+around the map stays SwiftUI, and the `Coordinator` holding the diffing,
+interpolation, culling and overlay logic is identical on Mac and iPad.
 
 ### Three things that cost real CPU, and what fixed them
 
@@ -178,6 +212,22 @@ Sampled 7 polls at 5 s intervals:
 
 So a 5 s poll is justified by the data rather than guessed at, and the 5 s glide
 matches the interval.
+
+## Known risks for iPad
+
+None of these are ports; they are decisions that differ by platform.
+
+- **Every performance number here is a Mac number.** The 20 fps tick driving ~250
+  KVO-backed annotation moves is exactly the shape of thing that costs battery.
+  Measure on device before believing any of it.
+- **Background execution.** macOS polls while the window is open; iPadOS suspends
+  the app. A proximity alert cannot be a local timer there — it needs server push.
+- **Cellular.** 47 KB every 5 s is ~34 MB/hour, and the GTFS archive is another
+  4 MB. `NWPathMonitor` is already wired in; `isConstrained` / `isExpensive` should
+  drive the poll interval and gate the first download.
+- **Memory.** ~230 MB resident is comfortable on a Mac and on an iPad. It would not
+  be on an iPhone, which is the main reason iPhone is out of scope: the "plain
+  dictionaries, no database" decision only survives with that headroom.
 
 ## Not done yet
 
