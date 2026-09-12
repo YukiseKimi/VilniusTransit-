@@ -11,6 +11,8 @@ import VilniusTransitKit
 struct TransitMapView: NSViewRepresentable {
 
     var vehicles: [Vehicle]
+    /// The static timetable. Empty until it loads; every use degrades to nil.
+    var catalog: GTFSCatalog
     /// Changes whenever `vehicles` is meaningfully new. Cheaper than diffing an
     /// array of 385 structs on every SwiftUI update pass.
     var dataToken: Int
@@ -20,6 +22,11 @@ struct TransitMapView: NSViewRepresentable {
     @Binding var selectedFleetNumber: String?
 
     static let vilnius = CLLocationCoordinate2D(latitude: 54.6872, longitude: 25.2797)
+
+    /// Carries the route's published colour to the renderer.
+    final class RoutePolyline: MKPolyline {
+        var color: String?
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -71,6 +78,8 @@ struct TransitMapView: NSViewRepresentable {
         private var lastToken: Int?
         private var tickTimer: Timer?
         private var isApplyingSelection = false
+        private var routeOverlay: RoutePolyline?
+        private var overlayFleetNumber: String?
 
         /// 20 fps is smooth to the eye and a fifth of the work of matching the
         /// display refresh rate, which nothing here needs.
@@ -117,10 +126,13 @@ struct TransitMapView: NSViewRepresentable {
             incoming.reserveCapacity(diff.added.count)
             for id in diff.added {
                 guard let track = interpolator.track(id) else { continue }
+                let route = parent.catalog.route(forVehicle: track.vehicle)
                 let annotation = VehicleAnnotation(
                     vehicle: track.vehicle,
                     coordinate: track.coordinate(at: now),
-                    heading: track.heading(at: now)
+                    heading: track.heading(at: now),
+                    routeColorHex: route?.color,
+                    routeLongName: route?.longName
                 )
                 annotations[id] = annotation
                 incoming.append(annotation)
@@ -132,6 +144,11 @@ struct TransitMapView: NSViewRepresentable {
             for id in diff.updated {
                 guard let annotation = annotations[id], let track = interpolator.track(id) else { continue }
                 annotation.vehicle = track.vehicle
+                // A vehicle changes trip at a terminus, so its route can change
+                // under the same fleet number.
+                let route = parent.catalog.route(forVehicle: track.vehicle)
+                annotation.routeColorHex = route?.color
+                annotation.routeLongName = route?.longName
                 if let view = mapView.view(for: annotation) as? VehicleAnnotationView {
                     view.applyAppearance(annotation, selected: id == parent.selectedFleetNumber)
                 }
@@ -183,6 +200,8 @@ struct TransitMapView: NSViewRepresentable {
 
         func syncSelection(to fleetNumber: String?) {
             guard let mapView else { return }
+            updateRouteOverlay(for: fleetNumber, on: mapView)
+
             let current = (mapView.selectedAnnotations.first as? VehicleAnnotation)?.fleetNumber
             guard current != fleetNumber else { return }
 
@@ -201,7 +220,48 @@ struct TransitMapView: NSViewRepresentable {
             }
         }
 
+        // MARK: Route overlay
+
+        /// Draws the selected vehicle's own path from `shapes.txt`.
+        ///
+        /// Only the selection gets a polyline: all 945 route shapes at once is
+        /// 170k points of visual mud, and MapKit would redraw every one of them on
+        /// each pan.
+        private func updateRouteOverlay(for fleetNumber: String?, on mapView: MKMapView) {
+            guard fleetNumber != overlayFleetNumber else { return }
+            overlayFleetNumber = fleetNumber
+
+            if let existing = routeOverlay {
+                mapView.removeOverlay(existing)
+                routeOverlay = nil
+            }
+            guard let fleetNumber,
+                  let vehicle = annotations[fleetNumber]?.vehicle,
+                  let tripID = vehicle.gtfsTripID,
+                  let coordinates = parent.catalog.shape(forTrip: tripID),
+                  coordinates.count > 1
+            else { return }
+
+            let polyline = RoutePolyline(coordinates: coordinates, count: coordinates.count)
+            polyline.color = parent.catalog.route(forTrip: tripID)?.color
+            mapView.addOverlay(polyline, level: .aboveRoads)
+            routeOverlay = polyline
+        }
+
         // MARK: MKMapViewDelegate
+
+        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            guard let route = overlay as? RoutePolyline else {
+                return MKOverlayRenderer(overlay: overlay)
+            }
+            let renderer = MKPolylineRenderer(polyline: route)
+            let color = route.color.flatMap(MarkerImages.color(hex:)) ?? .systemBlue
+            renderer.strokeColor = color.withAlphaComponent(0.85)
+            renderer.lineWidth = 5
+            renderer.lineCap = .round
+            renderer.lineJoin = .round
+            return renderer
+        }
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             guard let vehicle = annotation as? VehicleAnnotation else { return nil }

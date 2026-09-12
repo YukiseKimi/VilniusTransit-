@@ -16,9 +16,16 @@ final class VehicleAnnotation: NSObject, MKAnnotation {
     var vehicle: Vehicle
     var heading: Double
 
+    /// Resolved from the static timetable via `ReisoIdGTFS` -> `trips.trip_id`.
+    /// Nil until the catalog loads, and for layover movements absent from it.
+    var routeColorHex: String?
+    var routeLongName: String?
+
     var title: String? { "\(vehicle.route) → \(vehicle.headsign)" }
     var subtitle: String? {
-        var parts = ["\(vehicle.mode.displayName) \(vehicle.id)", "\(Int(vehicle.speed)) km/h"]
+        var parts: [String] = []
+        if let routeLongName, !routeLongName.isEmpty { parts.append(routeLongName) }
+        parts += ["\(vehicle.mode.displayName) \(vehicle.id)", "\(Int(vehicle.speed)) km/h"]
         if let deviation = vehicle.deviationSeconds {
             let minutes = abs(deviation) / 60, seconds = abs(deviation) % 60
             let sign = deviation > 0 ? "late" : "early"
@@ -29,11 +36,19 @@ final class VehicleAnnotation: NSObject, MKAnnotation {
         return parts.joined(separator: " · ")
     }
 
-    init(vehicle: Vehicle, coordinate: CLLocationCoordinate2D, heading: Double) {
+    init(
+        vehicle: Vehicle,
+        coordinate: CLLocationCoordinate2D,
+        heading: Double,
+        routeColorHex: String? = nil,
+        routeLongName: String? = nil
+    ) {
         self.fleetNumber = vehicle.id
         self.vehicle = vehicle
         self.coordinate = coordinate
         self.heading = heading
+        self.routeColorHex = routeColorHex
+        self.routeLongName = routeLongName
     }
 }
 
@@ -52,6 +67,7 @@ final class VehicleAnnotationView: MKAnnotationView {
     private struct Appearance: Equatable {
         let route: String
         let mode: TransitMode
+        let colorHex: String?
         let punctuality: Punctuality
         let inService: Bool
         let selected: Bool
@@ -95,6 +111,7 @@ final class VehicleAnnotationView: MKAnnotationView {
         let appearance = Appearance(
             route: vehicle.route,
             mode: vehicle.mode,
+            colorHex: annotation.routeColorHex,
             punctuality: vehicle.punctuality,
             inService: vehicle.isInService,
             selected: selected
@@ -102,13 +119,15 @@ final class VehicleAnnotationView: MKAnnotationView {
         guard appearance != applied else { return }
         applied = appearance
 
+        let fill = MarkerImages.color(for: vehicle, routeColorHex: appearance.colorHex)
+
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         badgeLayer.contents = MarkerImages.shared.badge(
-            route: appearance.route, mode: appearance.mode,
+            route: appearance.route, fill: fill,
             punctuality: appearance.punctuality, selected: appearance.selected
         )
-        arrowLayer.contents = MarkerImages.shared.arrow(mode: appearance.mode)
+        arrowLayer.contents = MarkerImages.shared.arrow(fill: fill)
         // Out of service: still on the map, visibly not carrying anyone.
         layer?.opacity = appearance.inService ? 1.0 : 0.45
         zPriority = appearance.selected ? .max : .defaultUnselected

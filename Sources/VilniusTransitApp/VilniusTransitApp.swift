@@ -37,6 +37,7 @@ struct ContentView: View {
         } detail: {
             TransitMapView(
                 vehicles: model.filteredVehicles,
+                catalog: model.catalog,
                 dataToken: model.dataToken,
                 glide: model.pollInterval,
                 emphasis: emphasis,
@@ -84,7 +85,7 @@ struct SidebarView: View {
                     Toggle(isOn: binding(for: mode)) {
                         HStack {
                             Circle()
-                                .fill(Color(MarkerImages.color(for: mode)))
+                                .fill(Color(MarkerImages.fallbackColor(for: mode)))
                                 .frame(width: 9, height: 9)
                             Text(mode.displayName)
                             Spacer()
@@ -106,21 +107,44 @@ struct SidebarView: View {
                         .buttonStyle(.link)
                 }
                 ForEach(model.routeSummaries) { route in
-                    HStack {
+                    HStack(spacing: 8) {
                         Text(route.name)
-                            .font(.system(.body, design: .rounded, weight: .semibold))
-                            .frame(minWidth: 34, alignment: .leading)
-                            .foregroundStyle(Color(MarkerImages.color(for: route.mode)))
-                        Spacer()
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color(badgeTextColor(for: route)))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color(badgeColor(for: route)), in: Capsule())
+                            .frame(minWidth: 38, alignment: .leading)
+                        if let longName = route.longName, !longName.isEmpty {
+                            Text(longName)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        Spacer(minLength: 4)
                         Text("\(route.vehicleCount)")
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
                     .tag(route.name)
+                    .help(route.longName ?? route.name)
                 }
             }
         }
         .searchable(text: $model.routeQuery, placement: .sidebar, prompt: "Route")
+    }
+
+    private func badgeColor(for route: FleetModel.RouteSummary) -> NSColor {
+        route.colorHex.flatMap(MarkerImages.color(hex:)) ?? MarkerImages.fallbackColor(for: route.mode)
+    }
+
+    /// Night routes are published as black, which needs light text.
+    private func badgeTextColor(for route: FleetModel.RouteSummary) -> NSColor {
+        let fill = badgeColor(for: route)
+        guard let rgb = fill.usingColorSpace(.sRGB) else { return .white }
+        let luminance = 0.299 * rgb.redComponent + 0.587 * rgb.greenComponent + 0.114 * rgb.blueComponent
+        return luminance > 0.6 ? NSColor(white: 0.1, alpha: 1) : .white
     }
 
     private func binding(for mode: TransitMode) -> Binding<Bool> {
@@ -144,6 +168,9 @@ struct VehicleInspector: View {
                 Form {
                     Section {
                         LabeledContent("Route", value: vehicle.route.isEmpty ? "—" : vehicle.route)
+                        if let route = model.resolved(vehicle), !route.longName.isEmpty {
+                            LabeledContent("Line", value: route.longName)
+                        }
                         LabeledContent("Towards", value: vehicle.headsign)
                         LabeledContent("Mode", value: vehicle.mode.displayName)
                         LabeledContent("Fleet no.", value: vehicle.id)
@@ -157,16 +184,18 @@ struct VehicleInspector: View {
                             value: VilniusTime.clockString(secondsSinceMidnight: vehicle.measuredAtSecondsSinceMidnight)
                         )
                     }
-                    Section("GTFS") {
+                    Section("Timetable") {
                         LabeledContent("Trip", value: vehicle.gtfsTripID ?? "not in service")
                             .textSelection(.enabled)
-                        LabeledContent("route_type", value: "\(vehicle.mode.gtfsRouteType)")
+                        LabeledContent("route_type", value: "\(model.resolved(vehicle)?.routeType ?? vehicle.mode.gtfsRouteType)")
+                        if let shape = model.shape(for: vehicle) {
+                            LabeledContent("Path", value: "\(shape.count) points")
+                        } else if vehicle.isInService {
+                            // Layover and driver-break movements carry GTFS-shaped
+                            // trip IDs that the published feed does not contain.
+                            LabeledContent("Path", value: "not in the timetable")
+                        }
                         LabeledContent("Vehicle code", value: vehicle.vehicleTypeCode.isEmpty ? "—" : vehicle.vehicleTypeCode)
-                    }
-                    Section {
-                        Text("Joining trip to `trips.txt` gives the shape, headsign and route colour — that is the next step.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                 }
                 .formStyle(.grouped)
@@ -215,6 +244,10 @@ struct StatusBar: View {
                 Divider().frame(height: 12)
                 Text("\(Int(onTime))% on time").monospacedDigit()
             }
+            Divider().frame(height: 12)
+            Text(catalogText)
+                .foregroundStyle(catalogIsHealthy ? .secondary : .primary)
+                .help("Static timetable from stops.lt, cached on disk and refreshed conditionally")
             if model.notModifiedCount > 0 {
                 Divider().frame(height: 12)
                 Text("\(model.notModifiedCount) of \(model.pollCount) polls unchanged")
@@ -233,6 +266,24 @@ struct StatusBar: View {
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(.separator))
         .padding(.bottom, 14)
+    }
+
+    private var catalogText: String {
+        switch model.catalogStatus {
+        case .loading:
+            return "Timetable loading…"
+        case .ready(let trips, _, let fromCache):
+            let joined = model.joinedCount
+            let source = fromCache ? "cached" : "fresh"
+            return "\(joined)/\(model.vehicles.count) joined · \(trips) trips (\(source))"
+        case .failed:
+            return "Timetable unavailable"
+        }
+    }
+
+    private var catalogIsHealthy: Bool {
+        if case .failed = model.catalogStatus { return false }
+        return true
     }
 
     private var statusColor: Color {

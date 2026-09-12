@@ -6,6 +6,10 @@ import VilniusTransitKit
 @main
 struct FeedCheck {
     static func main() async {
+        if CommandLine.arguments.dropFirst().first == "gtfs" {
+            await checkGTFS()
+            return
+        }
         let client = VehicleFeedClient(pollInterval: .seconds(5))
 
         print("Polling \(URL.vilniusLiveFeed.absoluteString)\n")
@@ -59,6 +63,74 @@ struct FeedCheck {
         }
 
         await client.stop()
+    }
+
+    /// Downloads the real archive and decodes it, reporting what the join buys.
+    static func checkGTFS() async {
+        print("Downloading \(URL.vilniusGTFS.absoluteString)")
+        let started = Date()
+        guard let (data, response) = try? await URLSession.shared.data(from: .vilniusGTFS) else {
+            print("download failed"); exit(1)
+        }
+        let modified = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Last-Modified")
+        print(String(format: "  %.1f MB in %.1fs   Last-Modified: %@",
+                     Double(data.count) / 1_048_576, Date().timeIntervalSince(started), modified ?? "—"))
+
+        do {
+            let archive = try ZIPArchive(data: data)
+            print("\n  Archive contents:")
+            for entry in archive.entries.sorted(by: { $0.uncompressedSize > $1.uncompressedSize }) {
+                let used = GTFSDecoder.required.contains(entry.name)
+                print(String(format: "    %-20@ %8.1f KB  %@",
+                             entry.name as NSString,
+                             Double(entry.uncompressedSize) / 1024,
+                             used ? "inflated" : "skipped"))
+            }
+
+            let (catalog, stats) = try GTFSDecoder.decode(archive: data)
+            print(String(format: "\n  Decoded in %.2fs: %d routes, %d trips, %d shapes (%d points), %d stops",
+                         stats.duration, stats.routes, stats.trips, stats.shapes, stats.shapePoints, stats.stops))
+
+            // The whole point: can we join live vehicles to the timetable?
+            let client = VehicleFeedClient()
+            guard case .snapshot(let snapshot) = try await client.poll() else {
+                print("  live poll failed"); return
+            }
+            await client.stop()
+
+            let inService = snapshot.vehicles.filter(\.isInService)
+            let joined = inService.filter { catalog.route(forVehicle: $0) != nil }
+            let withShape = inService.filter {
+                $0.gtfsTripID.flatMap { catalog.shape(forTrip: $0) } != nil
+            }
+            print("\n  Live join against \(snapshot.vehicles.count) vehicles:")
+            print("    in service          \(inService.count)")
+            print("    matched a GTFS trip \(joined.count)")
+            print("    have a route shape  \(withShape.count)")
+
+            if let sample = withShape.first,
+               let tripID = sample.gtfsTripID,
+               let route = catalog.route(forTrip: tripID),
+               let shape = catalog.shape(forTrip: tripID) {
+                print("\n  Example — \(sample.mode.displayName) \(sample.id):")
+                print("    feed says route   \(sample.route), towards \(sample.headsign)")
+                print("    GTFS says         \(route.shortName) — \(route.longName)")
+                print("    route_type        \(route.routeType)   colour #\(route.color) on #\(route.textColor)")
+                print("    shape             \(shape.count) points")
+            }
+
+            // Does the feed's own route label agree with the timetable's?
+            let disagreeing = joined.filter { vehicle in
+                catalog.route(forVehicle: vehicle)?.shortName != vehicle.route
+            }
+            print("\n    route label disagreements: \(disagreeing.count)")
+            for vehicle in disagreeing.prefix(5) {
+                print("      fleet \(vehicle.id): feed \"\(vehicle.route)\" vs GTFS \"\(catalog.route(forVehicle: vehicle)?.shortName ?? "?")\"")
+            }
+        } catch {
+            print("  FAILED: \(error.localizedDescription)")
+            exit(1)
+        }
     }
 
     static func report(_ snapshot: VehicleFeedClient.Snapshot, label: String) {
