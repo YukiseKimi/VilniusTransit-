@@ -116,6 +116,36 @@ final class MarkerImages {
         return image
     }
 
+    // MARK: - Station dot
+
+    private let dots = NSCache<NSString, NSImage>()
+
+    /// Termini get a larger ring so the ends of the route read at a glance.
+    func stationDot(fill: NSColor, terminus: Bool) -> NSImage {
+        let key = "\(fill.hexKey)|\(terminus)" as NSString
+        if let cached = dots.object(forKey: key) { return cached }
+
+        let diameter: CGFloat = terminus ? 14 : 10
+        let size = CGSize(width: diameter, height: diameter)
+        let image = NSImage(size: size, flipped: false) { _ in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            let rect = CGRect(origin: .zero, size: size).insetBy(dx: 1.5, dy: 1.5)
+            ctx.setShadow(offset: .zero, blur: 2, color: NSColor.black.withAlphaComponent(0.4).cgColor)
+            ctx.setFillColor(NSColor.white.cgColor)
+            ctx.fillEllipse(in: CGRect(origin: .zero, size: size))
+            ctx.setShadow(offset: .zero, blur: 0, color: nil)
+            // A terminus is drawn hollow so it reads as an endpoint, not a call.
+            ctx.setFillColor(terminus ? NSColor.white.cgColor : fill.cgColor)
+            ctx.fillEllipse(in: rect)
+            ctx.setStrokeColor(fill.cgColor)
+            ctx.setLineWidth(terminus ? 3 : 1.5)
+            ctx.strokeEllipse(in: rect.insetBy(dx: 0.75, dy: 0.75))
+            return true
+        }
+        dots.setObject(image, forKey: key)
+        return image
+    }
+
     // MARK: - Direction arrow
 
     static let arrowSize = CGSize(width: 12, height: 12)

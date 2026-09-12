@@ -197,6 +197,28 @@ struct VehicleInspector: View {
                         }
                         LabeledContent("Vehicle code", value: vehicle.vehicleTypeCode.isEmpty ? "—" : vehicle.vehicleTypeCode)
                     }
+                    let calls = model.stations(for: vehicle)
+                    if !calls.isEmpty {
+                        Section("Calls at \(calls.count) stops") {
+                            ForEach(Array(calls.enumerated()), id: \.element.id) { index, station in
+                                HStack(spacing: 8) {
+                                    Text("\(index + 1)")
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                        .frame(minWidth: 18, alignment: .trailing)
+                                    Text(station.name)
+                                        .lineLimit(1)
+                                    if station.platformCount > 1 {
+                                        Image(systemName: "arrow.left.arrow.right")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                            .help("\(station.platformCount) platforms grouped")
+                                    }
+                                    Spacer()
+                                }
+                            }
+                        }
+                    }
                 }
                 .formStyle(.grouped)
             } else {

@@ -54,6 +54,24 @@ public struct GTFSCSV {
             return field.hasEscapes ? raw.replacingOccurrences(of: "\"\"", with: "\"") : raw
         }
 
+        /// FNV-1a over the field's raw bytes.
+        ///
+        /// Lets a caller test a column against a known set without materialising a
+        /// `String` per row. `stop_times.txt` is 504k rows of which ~5% matter, so
+        /// allocating a trip id for every one of them dominates the decode.
+        public func fieldHash(_ index: Int) -> UInt64 {
+            guard index >= 0, index < fields.count else { return 0 }
+            let field = fields[index]
+            var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+            var i = field.start
+            while i < field.end {
+                hash ^= UInt64(bytes[i])
+                hash = hash &* 0x100_0000_01b3
+                i += 1
+            }
+            return hash
+        }
+
         public func isEmpty(_ index: Int) -> Bool {
             guard index >= 0, index < fields.count else { return true }
             return fields[index].end <= fields[index].start
@@ -119,6 +137,16 @@ public struct GTFSCSV {
         guard !header.isEmpty else { throw CSVError.empty }
         self.columns = header
         self.bodyStart = end
+    }
+
+    /// Same hash as `Row.fieldHash`, for building the lookup side.
+    public static func fieldHash(_ string: String) -> UInt64 {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in string.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100_0000_01b3
+        }
+        return hash
     }
 
     public func index(of column: String) -> Int? {

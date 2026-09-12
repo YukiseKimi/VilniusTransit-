@@ -88,8 +88,10 @@ struct FeedCheck {
             }
 
             let (catalog, stats) = try GTFSDecoder.decode(archive: data)
-            print(String(format: "\n  Decoded in %.2fs: %d routes, %d trips, %d shapes (%d points), %d stops",
-                         stats.duration, stats.routes, stats.trips, stats.shapes, stats.shapePoints, stats.stops))
+            print(String(format: "\n  Decoded in %.2fs: %d routes, %d trips, %d shapes (%d points)",
+                         stats.duration, stats.routes, stats.trips, stats.shapes, stats.shapePoints))
+            print("    \(stats.stops) stops grouped into \(stats.stations) stations")
+            print("    \(stats.shapesWithStops) of \(stats.shapes) shapes have a stop list")
 
             // The whole point: can we join live vehicles to the timetable?
             let client = VehicleFeedClient()
@@ -117,6 +119,9 @@ struct FeedCheck {
                 print("    GTFS says         \(route.shortName) — \(route.longName)")
                 print("    route_type        \(route.routeType)   colour #\(route.color) on #\(route.textColor)")
                 print("    shape             \(shape.count) points")
+                let calls = catalog.stations(forTrip: tripID)
+                print("    calls at          \(calls.count) stations")
+                print("      " + calls.prefix(4).map(\.name).joined(separator: " -> ") + " -> …")
             }
 
             // Does the feed's own route label agree with the timetable's?

@@ -133,14 +133,16 @@ struct GTFSCSVTests {
 @Suite("GTFS decoding")
 struct GTFSDecoderTests {
 
-    @Test("decodes the archive without inflating stop_times")
+    @Test("decodes the archive, inflating only what it needs")
     func decodesAndSkips() throws {
         let (catalog, stats) = try GTFSDecoder.decode(archive: fixtureArchive())
         #expect(stats.routes == 4)
-        #expect(stats.trips == 4)
-        #expect(stats.stops == 4)
-        // The 200 KB file we never touch, and agency.txt which we do not need.
-        #expect(stats.skippedFiles == ["agency.txt", "stop_times.txt"])
+        #expect(stats.trips == 5)
+        #expect(stats.stops == 6)
+        #expect(stats.stations == 5)
+        // stop_times is inflated but discarded down to one stop list per shape;
+        // agency.txt is never touched at all.
+        #expect(stats.skippedFiles == ["agency.txt"])
         #expect(catalog.trips["A7-01-6-260901-ba-1300"] != nil)
     }
 
@@ -204,5 +206,100 @@ struct GTFSDecoderTests {
         let (catalog, _) = try GTFSDecoder.decode(archive: fixtureArchive())
         #expect(catalog.routes["vilnius_trolley_2"]?.routeType == 800)
         #expect(catalog.routes["vilnius_trolley_2"]?.color == "DC3131")
+    }
+}
+
+@Suite("Stations")
+struct GTFSStationTests {
+
+    private func catalog() throws -> GTFSCatalog {
+        try GTFSDecoder.decode(archive: fixtureArchive()).catalog
+    }
+
+    /// Vilnius lists each direction as its own stop — 1,424 of 1,553 share a name
+    /// with another — so raw stops put twin dots on every corner.
+    @Test("same-named stops within 150 m become one station")
+    func groupsDirectionPairs() throws {
+        let catalog = try catalog()
+        let station = try #require(catalog.stations.first { $0.name == "Kalvarijų" && $0.platformCount > 1 })
+        #expect(station.platformIDs == ["16292", "16293"])
+        // Centroid of the pair, not one of the platforms.
+        #expect(abs(station.coordinate.latitude - 54.70009) < 1e-5)
+    }
+
+    @Test("same-named stops far apart stay separate places")
+    func doesNotOverMerge() throws {
+        let catalog = try catalog()
+        let kalvariju = catalog.stations.filter { $0.name == "Kalvarijų" }
+        // Three stops share the name; two are a pair, the third is 10 km away.
+        #expect(kalvariju.count == 2)
+        #expect(kalvariju.contains { $0.platformIDs == ["16294"] })
+    }
+
+    @Test("a station id is the lowest-sorting platform, so it is stable")
+    func stableStationID() throws {
+        let catalog = try catalog()
+        let station = try #require(catalog.stations.first { $0.platformCount > 1 })
+        #expect(station.id == station.platformIDs.sorted().first)
+    }
+
+    @Test("calls are ordered by stop_sequence, not file order")
+    func ordersCalls() throws {
+        let catalog = try catalog()
+        let calls = catalog.stations(forTrip: "A7-01-6-260901-ba-1300")
+        #expect(calls.map(\.name) == ["1-asis Lentvaris", "Kalvarijų", "Geležinio Vilko st."])
+    }
+
+    /// Sequence 4 returns to the station visited at sequence 2 via its other
+    /// platform. One dot on the map, not two.
+    @Test("a station reached twice appears once")
+    func dedupesRepeatCalls() throws {
+        let catalog = try catalog()
+        let calls = catalog.stations(forTrip: "A7-01-6-260901-ba-1300")
+        #expect(Set(calls.map(\.id)).count == calls.count)
+    }
+
+    /// Every trip sharing a shape calls at the same stops, so only one
+    /// representative trip per shape is read out of the 504k-row file.
+    @Test("trips sharing a shape share its stop list")
+    func sharesStopListByShape() throws {
+        let catalog = try catalog()
+        // N1-01 and A7-02 both use shape_7_ba but neither is its representative;
+        // their own stop_times rows (all pointing at one stop) are never read.
+        let day = catalog.stations(forTrip: "A7-01-6-260901-ba-1300")
+        #expect(day.count == 3)
+        for other in ["N1-01-6-260901-ab-0030", "A7-02-6-260901-ba-1400"] {
+            #expect(catalog.stations(forTrip: other).map(\.id) == day.map(\.id))
+        }
+    }
+
+    @Test("a trip with no shape has no calls rather than failing")
+    func tripWithoutShapeHasNoCalls() throws {
+        let catalog = try catalog()
+        #expect(catalog.stations(forTrip: "AL1-01-1-260901-ab-0820").isEmpty)
+        #expect(catalog.stations(forTrip: "does-not-exist").isEmpty)
+    }
+
+    /// The representative trip per shape was originally taken from unordered
+    /// dictionary iteration, so decoding the same archive twice could yield
+    /// different stop lists. It is now the lowest-sorting trip id.
+    @Test("decoding the same archive twice gives identical stop lists")
+    func decodeIsDeterministic() throws {
+        let data = try fixtureArchive()
+        let first = try GTFSDecoder.decode(archive: data).catalog
+        for _ in 0..<5 {
+            let again = try GTFSDecoder.decode(archive: data).catalog
+            #expect(first.stationsByShape == again.stationsByShape)
+            #expect(first.stations.map(\.id) == again.stations.map(\.id))
+            #expect(first.stations.map(\.platformIDs) == again.stations.map(\.platformIDs))
+        }
+    }
+
+    @Test("station lookup by id round-trips")
+    func lookupByID() throws {
+        let catalog = try catalog()
+        let station = try #require(catalog.stations.first)
+        #expect(catalog.station(station.id)?.name == station.name)
+        #expect(catalog.station("nonsense") == nil)
     }
 }

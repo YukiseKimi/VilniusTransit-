@@ -39,6 +39,8 @@ struct TransitMapView: NSViewRepresentable {
         mapView.isPitchEnabled = false
         mapView.register(VehicleAnnotationView.self,
                          forAnnotationViewWithReuseIdentifier: VehicleAnnotationView.reuseIdentifier)
+        mapView.register(StationAnnotationView.self,
+                         forAnnotationViewWithReuseIdentifier: StationAnnotationView.reuseIdentifier)
         mapView.setRegion(
             MKCoordinateRegion(center: Self.vilnius,
                                span: MKCoordinateSpan(latitudeDelta: 0.13, longitudeDelta: 0.22)),
@@ -79,6 +81,7 @@ struct TransitMapView: NSViewRepresentable {
         private var tickTimer: Timer?
         private var isApplyingSelection = false
         private var routeOverlay: RoutePolyline?
+        private var stationAnnotations: [StationAnnotation] = []
         private var overlayFleetNumber: String?
 
         /// 20 fps is smooth to the eye and a fifth of the work of matching the
@@ -143,12 +146,18 @@ struct TransitMapView: NSViewRepresentable {
             // Position is left to the interpolation tick.
             for id in diff.updated {
                 guard let annotation = annotations[id], let track = interpolator.track(id) else { continue }
+                // Captured before the reassignment below: a vehicle turning round
+                // at a terminus keeps its fleet number but starts a new trip.
+                let previousTrip = annotation.vehicle.gtfsTripID
                 annotation.vehicle = track.vehicle
-                // A vehicle changes trip at a terminus, so its route can change
-                // under the same fleet number.
                 let route = parent.catalog.route(forVehicle: track.vehicle)
                 annotation.routeColorHex = route?.color
                 annotation.routeLongName = route?.longName
+                // The drawn route and its stops must follow it.
+                if id == parent.selectedFleetNumber, previousTrip != track.vehicle.gtfsTripID {
+                    overlayFleetNumber = nil
+                    updateRouteOverlay(for: id, on: mapView)
+                }
                 if let view = mapView.view(for: annotation) as? VehicleAnnotationView {
                     view.applyAppearance(annotation, selected: id == parent.selectedFleetNumber)
                 }
@@ -222,11 +231,12 @@ struct TransitMapView: NSViewRepresentable {
 
         // MARK: Route overlay
 
-        /// Draws the selected vehicle's own path from `shapes.txt`.
+        /// Draws the selected vehicle's path from `shapes.txt` and the stations it
+        /// calls at.
         ///
-        /// Only the selection gets a polyline: all 945 route shapes at once is
-        /// 170k points of visual mud, and MapKit would redraw every one of them on
-        /// each pan.
+        /// Both are scoped to the selection. All 945 shapes at once is 170k points
+        /// of visual mud, and all 845 stations puts ~990 overlapping dots in the
+        /// default viewport. One route's worth of each is legible and meaningful.
         private func updateRouteOverlay(for fleetNumber: String?, on mapView: MKMapView) {
             guard fleetNumber != overlayFleetNumber else { return }
             overlayFleetNumber = fleetNumber
@@ -235,17 +245,36 @@ struct TransitMapView: NSViewRepresentable {
                 mapView.removeOverlay(existing)
                 routeOverlay = nil
             }
+            if !stationAnnotations.isEmpty {
+                mapView.removeAnnotations(stationAnnotations)
+                stationAnnotations = []
+            }
+
             guard let fleetNumber,
                   let vehicle = annotations[fleetNumber]?.vehicle,
-                  let tripID = vehicle.gtfsTripID,
-                  let coordinates = parent.catalog.shape(forTrip: tripID),
-                  coordinates.count > 1
+                  let tripID = vehicle.gtfsTripID
             else { return }
 
-            let polyline = RoutePolyline(coordinates: coordinates, count: coordinates.count)
-            polyline.color = parent.catalog.route(forTrip: tripID)?.color
-            mapView.addOverlay(polyline, level: .aboveRoads)
-            routeOverlay = polyline
+            let colorHex = parent.catalog.route(forTrip: tripID)?.color
+
+            if let coordinates = parent.catalog.shape(forTrip: tripID), coordinates.count > 1 {
+                let polyline = RoutePolyline(coordinates: coordinates, count: coordinates.count)
+                polyline.color = colorHex
+                mapView.addOverlay(polyline, level: .aboveRoads)
+                routeOverlay = polyline
+            }
+
+            let stations = parent.catalog.stations(forTrip: tripID)
+            guard !stations.isEmpty else { return }
+            stationAnnotations = stations.enumerated().map { offset, station in
+                StationAnnotation(
+                    station: station,
+                    sequence: offset + 1,
+                    total: stations.count,
+                    colorHex: colorHex
+                )
+            }
+            mapView.addAnnotations(stationAnnotations)
         }
 
         // MARK: MKMapViewDelegate
@@ -264,6 +293,14 @@ struct TransitMapView: NSViewRepresentable {
         }
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            if let station = annotation as? StationAnnotation {
+                let view = mapView.dequeueReusableAnnotationView(
+                    withIdentifier: StationAnnotationView.reuseIdentifier,
+                    for: station
+                ) as? StationAnnotationView
+                view?.apply(station)
+                return view
+            }
             guard let vehicle = annotation as? VehicleAnnotation else { return nil }
             let view = mapView.dequeueReusableAnnotationView(
                 withIdentifier: VehicleAnnotationView.reuseIdentifier,
@@ -275,12 +312,15 @@ struct TransitMapView: NSViewRepresentable {
         }
 
         func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
+            // Clicking a stop shows its callout; it is not a vehicle selection.
+            if view.annotation is StationAnnotation { return }
             guard !isApplyingSelection, let annotation = view.annotation as? VehicleAnnotation else { return }
             parent.selectedFleetNumber = annotation.fleetNumber
             (view as? VehicleAnnotationView)?.applyAppearance(annotation, selected: true)
         }
 
         func mapView(_ mapView: MKMapView, didDeselect view: MKAnnotationView) {
+            if view.annotation is StationAnnotation { return }
             guard !isApplyingSelection, let annotation = view.annotation as? VehicleAnnotation else { return }
             if parent.selectedFleetNumber == annotation.fleetNumber { parent.selectedFleetNumber = nil }
             (view as? VehicleAnnotationView)?.applyAppearance(annotation, selected: false)

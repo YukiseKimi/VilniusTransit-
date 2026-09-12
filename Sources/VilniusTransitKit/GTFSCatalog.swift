@@ -37,6 +37,26 @@ public struct GTFSStop: Sendable, Identifiable, Hashable {
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
+/// Several physical stops that are one place to a passenger.
+///
+/// Vilnius lists every direction as its own stop: 1,424 of the 1,553 stops share a
+/// name with at least one other, typically a pair ~26 m apart across a road.
+/// Drawing them raw produces twin dots for every stop in the city. Grouping by name
+/// and proximity collapses 1,553 stops into 779 stations.
+public struct GTFSStation: Sendable, Identifiable, Hashable {
+    /// The lowest-sorting platform id in the group, so it is stable across rebuilds.
+    public let id: String
+    public let name: String
+    /// Centroid of the platforms.
+    public let coordinate: CLLocationCoordinate2D
+    public let platformIDs: [String]
+
+    public var platformCount: Int { platformIDs.count }
+
+    public static func == (lhs: GTFSStation, rhs: GTFSStation) -> Bool { lhs.id == rhs.id }
+    public func hash(into hasher: inout Hasher) { hasher.combine(id) }
+}
+
 /// The static timetable, minus the parts a live map does not need.
 ///
 /// `stop_times.txt` is deliberately absent. It is 27 MB of the archive's 39 MB and
@@ -49,6 +69,17 @@ public struct GTFSCatalog: Sendable {
     /// Deduplicated by `shape_id`: 945 distinct paths behind 25k trips.
     public let shapes: [String: [CLLocationCoordinate2D]]
     public let stops: [String: GTFSStop]
+    /// Direction-pairs merged into single places.
+    public let stations: [GTFSStation]
+    /// Ordered station ids served by each `shape_id`.
+    ///
+    /// This is all that survives of `stop_times.txt`. The file is 26 MB and 504k
+    /// rows; keeping it would dwarf everything else in memory, and nothing needs
+    /// per-trip timings. Collapsing it to one ordered stop list per shape — 945
+    /// shapes rather than 25k trips — costs a few thousand strings and is what lets
+    /// the map show only the selected route's stops.
+    public let stationsByShape: [String: [String]]
+    private let stationIndex: [String: Int]
     /// `Last-Modified` of the archive this was decoded from, when known.
     public let publishedAt: Date?
 
@@ -57,13 +88,33 @@ public struct GTFSCatalog: Sendable {
         trips: [String: GTFSTrip],
         shapes: [String: [CLLocationCoordinate2D]],
         stops: [String: GTFSStop],
+        stations: [GTFSStation] = [],
+        stationsByShape: [String: [String]] = [:],
         publishedAt: Date? = nil
     ) {
         self.routes = routes
         self.trips = trips
         self.shapes = shapes
         self.stops = stops
+        self.stations = stations
+        self.stationsByShape = stationsByShape
         self.publishedAt = publishedAt
+        var index: [String: Int] = [:]
+        index.reserveCapacity(stations.count)
+        for (offset, station) in stations.enumerated() { index[station.id] = offset }
+        self.stationIndex = index
+    }
+
+    public func station(_ id: String) -> GTFSStation? {
+        stationIndex[id].map { stations[$0] }
+    }
+
+    /// The stations a vehicle on this trip will call at, in order.
+    public func stations(forTrip tripID: String) -> [GTFSStation] {
+        guard let shapeID = trips[tripID]?.shapeID,
+              let ids = stationsByShape[shapeID]
+        else { return [] }
+        return ids.compactMap(station)
     }
 
     // MARK: - The join
@@ -101,13 +152,21 @@ public enum GTFSDecoder {
         public var shapes = 0
         public var shapePoints = 0
         public var stops = 0
+        public var stations = 0
+        public var shapesWithStops = 0
         public var duration: TimeInterval = 0
         /// Files named in the archive that we deliberately never inflated.
         public var skippedFiles: [String] = []
     }
 
     /// Files we actually inflate. Everything else in the archive stays compressed.
-    public static let required = ["routes.txt", "trips.txt", "shapes.txt", "stops.txt"]
+    public static let required = ["routes.txt", "trips.txt", "shapes.txt", "stops.txt", "stop_times.txt"]
+
+    /// Two stops with the same name this close together are one place.
+    ///
+    /// 150 m comfortably covers a pair either side of a road (median spread 78 m)
+    /// without merging same-named stops that are genuinely a walk apart.
+    static let stationRadius: CLLocationDistance = 150
 
     public static func decode(
         archive data: Data,
@@ -126,16 +185,24 @@ public enum GTFSDecoder {
         let trips = try decodeTrips(archive)
         let shapes = try decodeShapes(archive)
         let stops = try decodeStops(archive)
+        let stations = buildStations(from: stops)
+        let stationsByShape = try decodeStationsByShape(archive, trips: trips, stops: stops, stations: stations)
 
         stats.routes = routes.count
         stats.trips = trips.count
         stats.shapes = shapes.count
         stats.shapePoints = shapes.values.reduce(0) { $0 + $1.count }
         stats.stops = stops.count
+        stats.stations = stations.count
+        stats.shapesWithStops = stationsByShape.count
         stats.duration = Date().timeIntervalSince(started)
 
         return (
-            GTFSCatalog(routes: routes, trips: trips, shapes: shapes, stops: stops, publishedAt: publishedAt),
+            GTFSCatalog(
+                routes: routes, trips: trips, shapes: shapes, stops: stops,
+                stations: stations, stationsByShape: stationsByShape,
+                publishedAt: publishedAt
+            ),
             stats
         )
     }
@@ -211,6 +278,108 @@ public enum GTFSDecoder {
         return pending.mapValues { points in
             points.sorted { $0.sequence < $1.sequence }.map(\.coordinate)
         }
+    }
+
+    /// Groups same-named stops that sit within `stationRadius` of each other.
+    ///
+    /// Single-link clustering within each name group. Groups are tiny (a pair, or a
+    /// handful at an interchange), so the quadratic inner loop never matters.
+    static func buildStations(from stops: [String: GTFSStop]) -> [GTFSStation] {
+        var byName: [String: [GTFSStop]] = [:]
+        for stop in stops.values {
+            byName[stop.name, default: []].append(stop)
+        }
+
+        var stations: [GTFSStation] = []
+        stations.reserveCapacity(byName.count)
+
+        for (name, group) in byName {
+            var remaining = group.sorted { $0.id < $1.id }
+            while !remaining.isEmpty {
+                var cluster = [remaining.removeFirst()]
+                var grew = true
+                while grew {
+                    grew = false
+                    for candidate in remaining {
+                        guard cluster.contains(where: { distance($0.coordinate, candidate.coordinate) < stationRadius })
+                        else { continue }
+                        cluster.append(candidate)
+                        remaining.removeAll { $0.id == candidate.id }
+                        grew = true
+                    }
+                }
+                let ids = cluster.map(\.id).sorted()
+                let latitude = cluster.reduce(0.0) { $0 + $1.coordinate.latitude } / Double(cluster.count)
+                let longitude = cluster.reduce(0.0) { $0 + $1.coordinate.longitude } / Double(cluster.count)
+                stations.append(GTFSStation(
+                    id: ids[0],
+                    name: name,
+                    coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+                    platformIDs: ids
+                ))
+            }
+        }
+        return stations.sorted { $0.id < $1.id }
+    }
+
+    /// Reduces `stop_times.txt` to one ordered station list per shape.
+    ///
+    /// Every trip sharing a shape calls at the same stops, so only one
+    /// representative trip per shape is read — 945 of 25,278 — and every other row
+    /// in the 504k-row file is discarded as it streams past.
+    static func decodeStationsByShape(
+        _ archive: ZIPArchive,
+        trips: [String: GTFSTrip],
+        stops: [String: GTFSStop],
+        stations: [GTFSStation]
+    ) throws -> [String: [String]] {
+        guard let csv = try csv(archive, "stop_times.txt") else { return [:] }
+        let c = try csv.indices(of: ["trip_id", "stop_id", "stop_sequence"])
+
+        // One representative trip per shape, chosen as the lowest-sorting trip id.
+        // Picking whichever came first out of an unordered dictionary made the
+        // decoded stop lists differ between runs of the same archive.
+        var lowestTrip: [String: String] = [:]       // shapeID -> tripID
+        for trip in trips.values {
+            guard let shapeID = trip.shapeID else { continue }
+            if let current = lowestTrip[shapeID], current <= trip.id { continue }
+            lowestTrip[shapeID] = trip.id
+        }
+        // Keyed by a hash of the trip id's bytes so the 95% of rows belonging to
+        // non-representative trips are rejected without allocating a String.
+        var byTripHash: [UInt64: (tripID: String, shapeID: String)] = [:]
+        byTripHash.reserveCapacity(lowestTrip.count)
+        for (shapeID, tripID) in lowestTrip {
+            byTripHash[GTFSCSV.fieldHash(tripID)] = (tripID, shapeID)
+        }
+
+        var stationOfStop: [String: String] = [:]
+        for station in stations {
+            for platform in station.platformIDs { stationOfStop[platform] = station.id }
+        }
+
+        var pending: [String: [(sequence: Int, stationID: String)]] = [:]
+        csv.forEachRow { row in
+            guard let candidate = byTripHash[row.fieldHash(c[0])] else { return }
+            // Verify the hash hit, so a collision cannot silently attach one
+            // route's stops to another. Runs only on the ~5% that match.
+            guard row.string(c[0]) == candidate.tripID else { return }
+            guard let stationID = stationOfStop[row.string(c[1])] else { return }
+            pending[candidate.shapeID, default: []].append((row.int(c[2]) ?? 0, stationID))
+        }
+
+        return pending.mapValues { entries in
+            var seen = Set<String>()
+            // A loop route can call at the same station twice; keep the first.
+            return entries.sorted { $0.sequence < $1.sequence }
+                .compactMap { seen.insert($0.stationID).inserted ? $0.stationID : nil }
+        }
+    }
+
+    private static func distance(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> CLLocationDistance {
+        let dLat = (b.latitude - a.latitude) * 111_320
+        let dLon = (b.longitude - a.longitude) * 111_320 * cos(a.latitude * .pi / 180)
+        return (dLat * dLat + dLon * dLon).squareRoot()
     }
 
     static func decodeStops(_ archive: ZIPArchive) throws -> [String: GTFSStop] {

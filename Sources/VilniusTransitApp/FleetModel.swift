@@ -91,6 +91,12 @@ final class FleetModel {
         return catalog.shape(forTrip: tripID)
     }
 
+    /// Stations this vehicle's current trip calls at, in order.
+    func stations(for vehicle: Vehicle) -> [GTFSStation] {
+        guard let tripID = vehicle.gtfsTripID else { return [] }
+        return catalog.stations(forTrip: tripID)
+    }
+
     struct RouteSummary: Identifiable, Hashable {
         var id: String { name }
         let name: String

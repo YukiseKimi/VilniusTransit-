@@ -5,7 +5,7 @@ Native frameworks only: MapKit, SwiftUI, AppKit, Foundation, Network, Core Anima
 **No third-party dependencies.**
 
 ```bash
-swift test                  # 44 tests, no network
+swift test                  # 53 tests, no network
 ./Scripts/build-app.sh      # -> build/VilniusTransit.app
 swift run feedcheck         # live feed diagnostic, no GUI
 swift run feedcheck gtfs    # downloads the archive and reports the join
@@ -17,6 +17,8 @@ swift run feedcheck gtfs    # downloads the archive and reports the join
 - Markers **glide** between fixes instead of teleporting
 - Joined to the static timetable: real route names, the city's own route colours,
   and the selected vehicle's actual path drawn from `shapes.txt`
+- Selecting a vehicle also shows **the stops it will call at**, in order, with the
+  ordered list in the inspector
 - Fill colour = published route colour, outline = punctuality
 - Sidebar with mode toggles, live per-route vehicle counts, route search
 - Inspector showing the selected vehicle's speed, heading, schedule deviation, GTFS trip
@@ -24,7 +26,7 @@ swift run feedcheck gtfs    # downloads the archive and reports the join
 - Status bar reporting poll health, rows skipped, and how many polls returned 304
 
 Measured on the full city view with all 383 vehicles and the timetable loaded:
-**~8% CPU, ~267 MB**.
+**~9% CPU, ~270 MB**.
 
 ## Data
 
@@ -115,14 +117,41 @@ Together: 53% CPU → ~8%.
 
 Foundation has no unzip API and the obvious packages are third-party. The format is
 simple enough to read directly, and doing so buys something a convenience API would
-not: **selective inflation**. `stop_times.txt` is 26 MB of the archive's 39 MB and
-about a million rows, and a live map never reads it — it is only needed for per-stop
-arrival predictions. Parsing the central directory means it is never decompressed at
-all. The whole archive decodes in **0.28 s** into plain dictionaries, with no
-database behind them.
+not: **selective inflation**. `calendar_dates.txt`, `calendar.txt`, `agency.txt`,
+`areas.txt` and `stop_areas.txt` are never decompressed at all — parsing the central
+directory means we choose what to inflate.
 
-The catalog costs about 55 MB resident. That is the deliberate trade for having no
-storage layer to build, migrate or debug.
+The archive decodes in **0.75 s** into plain dictionaries, with no database behind
+them. About 0.45 s of that is the `stop_times.txt` scan, which is CSV parsing rather
+than allocation: hashing trip ids from raw bytes instead of building a `String` for
+each of the 504k rows left decode time unchanged, but cut steady-state memory by
+roughly 90 MB.
+
+### Why stops are only shown for the selected vehicle
+
+Drawing every stop was measured before it was built, and it does not work: **990 of
+the 1,553 stops fall inside the app's default viewport**, outnumbering vehicles 2.6
+to 1. At that zoom (14 m per point) the median nearest-neighbour distance is 76 m,
+so roughly **900 of those 990 would overlap a neighbour**. Vilnius also lists each
+direction as its own stop — 1,424 of 1,553 share a name with another, typically a
+pair 26 m apart across a road — so a raw rendering is largely twin dots.
+
+Scoping stops to the selected vehicle's trip gives 20–40 instead of 990, every one
+of them meaningful: this vehicle will call there. It also removes the need for a
+zoom threshold, clustering, and a visibility toggle.
+
+Two pieces of the timetable make it work:
+
+- **Stations.** Same-named stops within 150 m are merged into one place, collapsing
+  1,553 stops into 845 stations. 150 m comfortably covers a pair either side of a
+  road (median spread 78 m) without merging same-named stops a real walk apart.
+- **`stop_times.txt`, collapsed.** The file is 26 MB and 504k rows and is the one
+  thing a live map would otherwise never read. It is reduced during decode to a
+  single ordered station list per `shape_id` — 945 lists rather than 25k trips —
+  and everything else is discarded as it streams past. Only one representative trip
+  per shape is read, chosen as the lowest-sorting trip id so the result is
+  reproducible; taking whichever came first out of an unordered dictionary made the
+  same archive decode differently between runs.
 
 ### Interpolation
 
@@ -152,8 +181,9 @@ matches the interval.
 
 ## Not done yet
 
-- Stop annotations with `clusteringIdentifier` (1,553 stops are decoded already)
-- Arrival predictions per stop, the one feature that needs `stop_times.txt`
+- Arrival predictions per stop — needs the timings from `stop_times.txt` that the
+  decode currently discards
+- Highlighting which stop the selected vehicle is approaching next
 - Sleep/wake handling via `NSWorkspace.notificationCenter`
 - Favourites, `UserNotifications` proximity alerts, Swift Charts punctuality history
 
