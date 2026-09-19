@@ -1,0 +1,74 @@
+<!--
+  Sklandus working icon.
+
+  A wolf gliding left in a flying gallop, in front of a full moon: Vilnius was
+  founded where Grand Duke Gediminas dreamt of an iron wolf howling on the hill.
+  Black is the night-bus colour from the city's own timetable data.
+
+  The wolf carries a night-black edge so it stays crisp where it crosses the moon.
+  This is a working icon. The release version, including the layered Liquid Glass
+  variant macOS 26 and iPadOS 26 use, is a separate job.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="228" fill="#0B0B0D"/>
+
+  <!-- Iron Wolf moon: Gediminas dreamt of a wolf howling on the hill where Vilnius stands -->
+  <circle cx="600" cy="360" r="200" fill="#E9E4D6"/>
+
+  <!-- Drawn facing right, then mirrored so it glides left -->
+  <g transform="translate(1024 0) scale(-1 1)">
+  <g transform="translate(512 512) scale(1.02) translate(-515 -456)">
+
+    <g stroke="#FFFFFF" stroke-linecap="round" fill="none">
+      <line x1="120" y1="470" x2="206" y2="470" stroke-width="20" opacity="0.8"/>
+      <line x1="140" y1="516" x2="200" y2="516" stroke-width="16" opacity="0.5"/>
+    </g>
+
+    <!-- Far-side legs -->
+    <g fill="#AEB3BA">
+      <path d="M 372 482 C 330 528, 272 580, 212 622 C 192 636, 202 656, 226 650
+               C 270 636, 324 594, 372 546 C 400 518, 420 496, 430 482 Z"/>
+      <path d="M 612 530 C 670 572, 736 610, 808 648 C 832 660, 852 650, 840 630
+               C 794 596, 730 556, 674 522 Z"/>
+    </g>
+
+    <!-- Near side. Wolf cues: blunt muzzle, small ears, shaggy mane, deep chest, low tail -->
+    <path fill="#FFFFFF" stroke="#0B0B0D" stroke-width="16" stroke-linejoin="round"
+          paint-order="stroke" d="
+      M 912 386
+      C 912 378, 908 372, 900 370
+      C 884 364, 862 358, 840 352
+      C 830 348, 820 340, 812 332
+      L 800 280
+      L 780 318
+      L 764 286
+      L 746 324
+      C 722 332, 692 346, 664 354
+      C 640 356, 600 362, 560 366
+      C 500 372, 440 378, 380 384
+      C 356 386, 336 390, 320 396
+      C 270 382, 190 380, 128 404
+      C 108 412, 108 432, 128 438
+      C 190 454, 254 454, 314 440
+      C 304 446, 290 466, 270 490
+      C 236 530, 196 568, 150 600
+      C 130 614, 116 622, 118 632
+      C 122 642, 150 640, 172 630
+      C 214 610, 256 572, 300 530
+      C 330 502, 356 486, 384 478
+      C 450 480, 520 492, 580 510
+      C 618 522, 646 538, 666 552
+      C 714 584, 772 612, 836 636
+      C 858 642, 880 648, 894 642
+      C 906 636, 900 622, 884 614
+      C 840 592, 790 566, 750 540
+      C 726 524, 710 512, 702 500
+      C 728 474, 766 442, 810 424
+      C 832 418, 856 412, 876 408
+      C 896 404, 910 396, 912 386 Z"/>
+
+    <!-- Almond eye, angled -->
+    <path d="M 812 364 C 822 356, 836 354, 846 358 C 836 366, 822 368, 812 364 Z" fill="#0B0B0D"/>
+  </g>
+  </g>
+</svg>
