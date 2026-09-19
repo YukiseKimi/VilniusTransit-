@@ -1,7 +1,7 @@
 # Vilnius Transit — spike
 
 A Mac and iPad app showing Vilnius buses, trolleybuses and ferries moving live on a
-map. Native frameworks only: MapKit, SwiftUI, Foundation, Network, Core Graphics,
+map. Requires macOS 26 / iPadOS 26, per `AGENTS.md`. Native frameworks only: MapKit, SwiftUI, Foundation, Network, Core Graphics,
 Core Animation, Core Text, Compression. **No third-party dependencies.**
 
 ```bash

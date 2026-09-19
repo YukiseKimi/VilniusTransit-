@@ -43,8 +43,8 @@ struct VehicleInspector: View {
                     let calls = model.stations(for: vehicle)
                     if !calls.isEmpty {
                         Section("Calls at \(calls.count) stops") {
-                            ForEach(Array(calls.enumerated()), id: \.element.id) { index, station in
-                                HStack(spacing: 8) {
+                            ForEach(calls.enumerated(), id: \.element.id) { index, station in
+                                HStack {
                                     Text("\(index + 1)")
                                         .font(.caption2.monospacedDigit())
                                         .foregroundStyle(.secondary)

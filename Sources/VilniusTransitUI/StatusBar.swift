@@ -6,8 +6,8 @@ struct StatusBar: View {
     @Environment(FleetModel.self) private var model
 
     var body: some View {
-        HStack(spacing: 14) {
-            HStack(spacing: 6) {
+        HStack {
+            HStack {
                 Circle().fill(statusColor).frame(width: 7, height: 7)
                 Text(statusText).fixedSize()
             }
@@ -20,7 +20,7 @@ struct StatusBar: View {
             Divider().frame(height: 12)
             Text(catalogText)
                 .foregroundStyle(catalogIsHealthy ? .secondary : .primary)
-                .help("Static timetable from stops.lt, cached on disk and refreshed conditionally")
+                .help("In-service vehicles matched to the stops.lt timetable. Vehicles heading to or from a depot have no trip and are not counted.")
             if model.notModifiedCount > 0 {
                 Divider().frame(height: 12)
                 Text("\(model.notModifiedCount) of \(model.pollCount) polls unchanged")
@@ -34,11 +34,10 @@ struct StatusBar: View {
             }
         }
         .font(.caption)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding()
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(.separator))
-        .padding(.bottom, 14)
+        .padding(.bottom)
     }
 
     private var catalogText: String {
@@ -48,7 +47,7 @@ struct StatusBar: View {
         case .ready(let trips, _, let fromCache):
             let joined = model.joinedCount
             let source = fromCache ? "cached" : "fresh"
-            return "\(joined)/\(model.vehicles.count) joined · \(trips) trips (\(source))"
+            return "\(joined)/\(model.inServiceCount) joined · \(trips) trips (\(source))"
         case .failed:
             return "Timetable unavailable"
         }

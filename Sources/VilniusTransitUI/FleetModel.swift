@@ -56,6 +56,9 @@ public final class FleetModel {
     public private(set) var filteredVehicles: [Vehicle] = []
     public private(set) var routeSummaries: [RouteSummary] = []
     public private(set) var joinedCount = 0
+    /// Vehicles running a scheduled trip — the only ones that can join the
+    /// timetable, so the right denominator for the join ratio.
+    public private(set) var inServiceCount = 0
     public private(set) var onTimePercentage: Double?
     private var modeCounts: [TransitMode: Int] = [:]
 
@@ -133,6 +136,7 @@ public final class FleetModel {
         filteredVehicles = filtered
         modeCounts = counts
         joinedCount = joined
+        inServiceCount = scheduled
         onTimePercentage = scheduled > 0 ? Double(onTime) / Double(scheduled) * 100 : nil
         recomputeRoutes()
     }

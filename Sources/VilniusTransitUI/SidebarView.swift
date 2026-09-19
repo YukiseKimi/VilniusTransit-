@@ -36,14 +36,13 @@ struct SidebarView: View {
                         .buttonStyle(.borderless)
                 }
                 ForEach(model.routeSummaries) { route in
-                    HStack(spacing: 8) {
+                    HStack {
                         Text(route.name)
                             .font(.caption)
                             .bold()
                             .fontDesign(.rounded)
                             .foregroundStyle(badgeTextColor(for: route).swiftUI)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
+                            .padding(.horizontal)
                             .background(badgeColor(for: route).swiftUI, in: Capsule())
                             .frame(minWidth: 38, alignment: .leading)
                         if let longName = route.longName, !longName.isEmpty {

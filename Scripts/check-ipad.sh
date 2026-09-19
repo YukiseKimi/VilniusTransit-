@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-TARGET="arm64-apple-ios17.0"
+TARGET="arm64-apple-ios26.0"
 MODULES="$(mktemp -d)"
 trap 'rm -rf "$MODULES"' EXIT
 
