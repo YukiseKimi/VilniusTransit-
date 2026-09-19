@@ -51,7 +51,7 @@ public struct GTFSCSV {
                 count: field.end - field.start
             )
             let raw = String(decoding: slice, as: UTF8.self)
-            return field.hasEscapes ? raw.replacingOccurrences(of: "\"\"", with: "\"") : raw
+            return field.hasEscapes ? raw.replacing("\"\"", with: "\"") : raw
         }
 
         /// FNV-1a over the field's raw bytes.

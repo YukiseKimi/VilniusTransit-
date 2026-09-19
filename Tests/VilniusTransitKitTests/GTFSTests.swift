@@ -303,3 +303,26 @@ struct GTFSStationTests {
         #expect(catalog.station("nonsense") == nil)
     }
 }
+
+@Suite("HTTP dates")
+struct HTTPDateTests {
+    /// The exact header stops.lt sends, so a parser regression shows up here and
+    /// not as a timetable that silently never refreshes.
+    @Test("parses the server's real Last-Modified header")
+    func parsesRealHeader() throws {
+        let date = try #require(GTFSStore.httpDate("Fri, 11 Sep 2026 18:45:34 GMT"))
+        let parts = Calendar(identifier: .gregorian).dateComponents(in: .gmt, from: date)
+        #expect(parts.year == 2026)
+        #expect(parts.month == 9)
+        #expect(parts.day == 11)
+        #expect(parts.hour == 18)
+        #expect(parts.minute == 45)
+        #expect(parts.second == 34)
+    }
+
+    @Test("rejects anything that is not RFC 1123")
+    func rejectsGarbage() {
+        #expect(GTFSStore.httpDate("") == nil)
+        #expect(GTFSStore.httpDate("2026-09-11T18:45:34Z") == nil)
+    }
+}

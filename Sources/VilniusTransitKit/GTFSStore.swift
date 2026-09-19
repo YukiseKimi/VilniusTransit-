@@ -21,8 +21,8 @@ public actor GTFSStore {
     private let directory: URL
     private let log = Logger(subsystem: "lt.vilnius.transit", category: "gtfs")
 
-    private var archiveURL: URL { directory.appendingPathComponent("gtfs.zip") }
-    private var metaURL: URL { directory.appendingPathComponent("gtfs-meta.json") }
+    private var archiveURL: URL { directory.appending(path: "gtfs.zip") }
+    private var metaURL: URL { directory.appending(path: "gtfs-meta.json") }
 
     private struct Meta: Codable {
         var lastModified: String?
@@ -34,9 +34,7 @@ public actor GTFSStore {
         if let cacheDirectory {
             self.directory = cacheDirectory
         } else {
-            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-                ?? URL(fileURLWithPath: NSTemporaryDirectory())
-            self.directory = base.appendingPathComponent("VilniusTransit", isDirectory: true)
+            self.directory = URL.applicationSupportDirectory.appending(path: "VilniusTransit", directoryHint: .isDirectory)
         }
         if let session {
             self.session = session
@@ -55,10 +53,10 @@ public actor GTFSStore {
     /// Kept separate from `refresh()` so the UI can join vehicles to routes on the
     /// very first frame instead of waiting on the network.
     public func cached() -> Loaded? {
-        guard FileManager.default.fileExists(atPath: archiveURL.path) else { return nil }
+        guard FileManager.default.fileExists(atPath: archiveURL.path(percentEncoded: false)) else { return nil }
         do {
             let data = try Data(contentsOf: archiveURL)
-            let modified = (try? FileManager.default.attributesOfItem(atPath: archiveURL.path))?[.modificationDate] as? Date
+            let modified = (try? archiveURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             let (catalog, stats) = try GTFSDecoder.decode(archive: data, publishedAt: modified)
             log.info("Loaded cached GTFS: \(stats.trips) trips, \(stats.shapes) shapes")
             return Loaded(catalog: catalog, stats: stats, fromCache: true)
@@ -144,10 +142,11 @@ public actor GTFSStore {
     /// RFC 1123, which is what `Last-Modified` uses. Locale and zone are pinned
     /// because the format is fixed by the spec, not by the user's settings.
     static func httpDate(_ string: String) -> Date? {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
-        return formatter.date(from: string)
+        let strategy = Date.ParseStrategy(
+            format: "\(weekday: .abbreviated), \(day: .twoDigits) \(month: .abbreviated) \(year: .defaultDigits) \(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)):\(minute: .twoDigits):\(second: .twoDigits) GMT",
+            locale: Locale(identifier: "en_US_POSIX"),
+            timeZone: .gmt
+        )
+        return try? Date(string, strategy: strategy)
     }
 }

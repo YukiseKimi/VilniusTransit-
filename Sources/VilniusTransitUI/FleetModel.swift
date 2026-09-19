@@ -154,7 +154,7 @@ public final class FleetModel {
             }
         }
 
-        let query = routeQuery.trimmingCharacters(in: .whitespaces).lowercased()
+        let query = routeQuery.trimmingCharacters(in: .whitespaces)
         routeSummaries = counts
             .map { name, value in
                 RouteSummary(
@@ -162,8 +162,10 @@ public final class FleetModel {
                     colorHex: value.route?.color, longName: value.route?.longName
                 )
             }
-            .filter { query.isEmpty || $0.name.lowercased().contains(query)
-                || ($0.longName?.lowercased().contains(query) ?? false) }
+            // localizedStandardContains ignores case and diacritics, so "zirmunai"
+            // finds "Žirmūnai" — which matters for Lithuanian stop names.
+            .filter { query.isEmpty || $0.name.localizedStandardContains(query)
+                || ($0.longName?.localizedStandardContains(query) ?? false) }
             // Route names are alphanumeric ("7", "3G", "N2"), so sort numerically
             // where possible and fall back to text.
             .sorted { lhs, rhs in

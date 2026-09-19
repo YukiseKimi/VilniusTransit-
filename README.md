@@ -5,7 +5,7 @@ map. Native frameworks only: MapKit, SwiftUI, Foundation, Network, Core Graphics
 Core Animation, Core Text, Compression. **No third-party dependencies.**
 
 ```bash
-swift test                  # 53 tests, no network
+swift test                  # 55 tests, no network
 ./Scripts/check-ipad.sh     # type-checks the shared targets for iPadOS
 ./Scripts/build-app.sh      # Mac -> build/VilniusTransit.app
 swift run feedcheck         # live feed diagnostic, no GUI
@@ -102,7 +102,7 @@ VilniusTransitUI       all the app, Mac + iPad
   VehicleAnnotation    MKAnnotation + MKAnnotationView (appearance / motion split)
   StationAnnotation    stops on the selected vehicle's route
   MarkerImages         Core Graphics art -> CGImage, cached by appearance
-  Screens              sidebar, inspector, status bar
+  ContentView, SidebarView, VehicleInspector, StatusBar   one screen per file
   Platform             every platform difference in this target, in one file
 
 VilniusTransitApp      Mac only — 60 lines
@@ -116,14 +116,18 @@ Verified by type-checking both shared targets against the iOS SDK
 
 | | |
 |---|---|
-| Bold system font | `NSFont`/`UIFont`, toll-free bridged to `CTFont` |
-| Backing scale | `NSScreen.backingScaleFactor` / `UIScreen.scale` |
 | Representable | `makeNSView` / `makeUIView` — three lines each, same body |
+| Polyline colour | `MKPolylineRenderer.strokeColor` is typed `NSColor`/`UIColor` |
 | `MKAnnotationView.layer` | optional on `NSView`, not on `UIView` |
 | Zoom controls | Mac shows buttons; iPad pinches |
 | Toggle style | checkbox on Mac, switch on iPad |
 | Search placement | `.sidebar` on Mac |
 | Hit targets | 24 pt for a cursor, 44 pt for a fingertip |
+
+UIKit is kept to what MapKit's own API forces: the representable wrapper and one
+colour property. The bold font comes from Core Text
+(`CTFontCreateUIFontForLanguage(.emphasizedSystem, …)`) and the display scale from
+SwiftUI's environment, so neither needs `UIFont`/`UIScreen` or their AppKit twins.
 
 Marker art is rendered straight to `CGImage` rather than through `NSImage` or
 `UIImage`. That is not a portability workaround: `CALayer.contents` wants a

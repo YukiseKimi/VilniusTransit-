@@ -67,7 +67,8 @@ public struct TransitMapView: TransitMapRepresentable {
     #endif
 
     private func makeMap(context: Context) -> MKMapView {
-        MarkerImages.shared.setScale(Platform.displayScale)
+        // SwiftUI already knows the display scale; no need to ask NSScreen/UIScreen.
+        MarkerImages.shared.setScale(context.environment.displayScale)
         let mapView = MKMapView()
         mapView.delegate = context.coordinator
         mapView.showsCompass = true
@@ -92,6 +93,8 @@ public struct TransitMapView: TransitMapRepresentable {
 
     private func updateMap(_ mapView: MKMapView, context: Context) {
         context.coordinator.parent = self
+        // Moving a window between displays can change the scale.
+        MarkerImages.shared.setScale(context.environment.displayScale)
 
         if let config = mapView.preferredConfiguration as? MKStandardMapConfiguration,
            config.emphasisStyle != emphasis {
@@ -321,6 +324,8 @@ public struct TransitMapView: TransitMapRepresentable {
             }
             let renderer = MKPolylineRenderer(polyline: route)
             let color = route.color.flatMap(RGBA.init(hex:)) ?? RGBA(0.04, 0.52, 1.00)
+            // `strokeColor` is typed as the platform colour, so this is the one
+            // place the drawing code has to name it.
             #if os(macOS)
             renderer.strokeColor = NSColor(cgColor: color.withAlpha(0.85).cgColor)
             #else

@@ -1,11 +1,6 @@
 import Foundation
 import Network
 
-public extension URL {
-    /// Full live feed: one row per vehicle, ~385 rows / ~47 KB, refreshed continuously.
-    static let vilniusLiveFeed = URL(string: "https://stops.lt/vilnius/gps_full.txt")!
-}
-
 /// Polls the Vilnius live vehicle feed and publishes decoded snapshots.
 ///
 /// Two things keep this polite to a city-run server, which matters when a 5-second
@@ -49,7 +44,7 @@ public actor VehicleFeedClient {
     private var lastModified: String?
     private var consecutiveFailures = 0
     private var isOnline = true
-    private var pathMonitor: NWPathMonitor?
+    private var pathTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
 
     public init(
@@ -119,8 +114,8 @@ public actor VehicleFeedClient {
     public func stop() {
         pollTask?.cancel()
         pollTask = nil
-        pathMonitor?.cancel()
-        pathMonitor = nil
+        pathTask?.cancel()
+        pathTask = nil
     }
 
     // MARK: - One poll
@@ -173,13 +168,13 @@ public actor VehicleFeedClient {
     /// Pausing on a dead link avoids burning the backoff budget on requests that
     /// cannot succeed, and makes the app resume instantly when Wi-Fi returns.
     private func startPathMonitor() {
-        guard pathMonitor == nil else { return }
-        let monitor = NWPathMonitor()
-        monitor.pathUpdateHandler = { [weak self] path in
-            let online = path.status == .satisfied
-            Task { await self?.setOnline(online) }
+        guard pathTask == nil else { return }
+        // NWPathMonitor is an AsyncSequence on macOS 14 / iOS 17, so no dispatch
+        // queue or callback is needed; cancelling the task stops the monitor.
+        pathTask = Task { [weak self] in
+            for await path in NWPathMonitor() {
+                await self?.setOnline(path.status == .satisfied)
+            }
         }
-        monitor.start(queue: DispatchQueue(label: "lt.vilnius.transit.path"))
-        pathMonitor = monitor
     }
 }

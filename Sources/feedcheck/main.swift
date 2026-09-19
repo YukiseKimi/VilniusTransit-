@@ -54,8 +54,7 @@ struct FeedCheck {
                 for step in stride(from: 0.0, through: 5.0, by: 1.25) {
                     let at = t1.addingTimeInterval(step)
                     let c = track.coordinate(at: at)
-                    print(String(format: "    t+%.2fs  %.6f, %.6f  hdg %3.0f",
-                                 step, c.latitude, c.longitude, track.heading(at: at)))
+                    print("    t+\(step.fixed(2))s  \(c.latitude.fixed(6)), \(c.longitude.fixed(6))  hdg \(track.heading(at: at).fixed(0))")
                 }
             }
         default:
@@ -73,23 +72,19 @@ struct FeedCheck {
             print("download failed"); exit(1)
         }
         let modified = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Last-Modified")
-        print(String(format: "  %.1f MB in %.1fs   Last-Modified: %@",
-                     Double(data.count) / 1_048_576, Date().timeIntervalSince(started), modified ?? "—"))
+        print("  \((Double(data.count) / 1_048_576).fixed(1)) MB in \(Date().timeIntervalSince(started).fixed(1))s   Last-Modified: \(modified ?? "—")")
 
         do {
             let archive = try ZIPArchive(data: data)
             print("\n  Archive contents:")
             for entry in archive.entries.sorted(by: { $0.uncompressedSize > $1.uncompressedSize }) {
                 let used = GTFSDecoder.required.contains(entry.name)
-                print(String(format: "    %-20@ %8.1f KB  %@",
-                             entry.name as NSString,
-                             Double(entry.uncompressedSize) / 1024,
-                             used ? "inflated" : "skipped"))
+                let size = (Double(entry.uncompressedSize) / 1024).fixed(1)
+                print("    \(entry.name.padding(toLength: 20, withPad: " ", startingAt: 0)) \(size) KB  \(used ? "inflated" : "skipped")")
             }
 
             let (catalog, stats) = try GTFSDecoder.decode(archive: data)
-            print(String(format: "\n  Decoded in %.2fs: %d routes, %d trips, %d shapes (%d points)",
-                         stats.duration, stats.routes, stats.trips, stats.shapes, stats.shapePoints))
+            print("\n  Decoded in \(stats.duration.fixed(2))s: \(stats.routes) routes, \(stats.trips) trips, \(stats.shapes) shapes (\(stats.shapePoints) points)")
             print("    \(stats.stops) stops grouped into \(stats.stations) stations")
             print("    \(stats.shapesWithStops) of \(stats.shapes) shapes have a stop list")
 
@@ -163,5 +158,12 @@ struct FeedCheck {
             .compactMap { name in buckets[name].map { "\(name) \($0)" } }
             .joined(separator: ", ")
         print("  punctuality  \(summary)")
+    }
+}
+
+private extension Double {
+    /// Fixed decimal places via FormatStyle rather than C-style `String(format:)`.
+    func fixed(_ places: Int) -> String {
+        formatted(.number.precision(.fractionLength(places)).grouping(.never).locale(Locale(identifier: "en_US_POSIX")))
     }
 }

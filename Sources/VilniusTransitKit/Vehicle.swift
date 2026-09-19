@@ -1,60 +1,6 @@
 import Foundation
 import CoreLocation
 
-/// Vehicle class as published in the `Transportas` column of the live feed.
-public enum TransitMode: String, Sendable, Hashable, CaseIterable {
-    case bus
-    case trolleybus
-    case ferry
-
-    /// The feed uses Lithuanian plurals. Unknown values are rejected rather than guessed.
-    init?(feedValue: some StringProtocol) {
-        switch feedValue {
-        case "Autobusai":   self = .bus
-        case "Troleibusai": self = .trolleybus
-        case "Laivai":      self = .ferry
-        default:            return nil
-        }
-    }
-
-    public var displayName: String {
-        switch self {
-        case .bus:        "Bus"
-        case .trolleybus: "Trolleybus"
-        case .ferry:      "Ferry"
-        }
-    }
-
-    /// GTFS `route_type`. 800 is the extended-GTFS trolleybus code, which is what
-    /// `routes.txt` actually uses for the 16 trolleybus routes.
-    public var gtfsRouteType: Int {
-        switch self {
-        case .bus:        3
-        case .trolleybus: 800
-        case .ferry:      4
-        }
-    }
-}
-
-/// How far a vehicle is from its timetable, bucketed for display.
-public enum Punctuality: Sendable, Hashable {
-    case early       // more than 60s ahead
-    case onTime      // within +/- 60s
-    case late        // 60s..300s behind
-    case veryLate    // more than 300s behind
-    case unknown     // vehicle is not on a scheduled trip
-
-    init(deviationSeconds: Int?) {
-        guard let d = deviationSeconds else { self = .unknown; return }
-        switch d {
-        case ..<(-60):   self = .early
-        case -60...60:   self = .onTime
-        case 61...300:   self = .late
-        default:         self = .veryLate
-        }
-    }
-}
-
 /// One row of `gps_full.txt`, decoded into sane units.
 public struct Vehicle: Sendable, Identifiable, Hashable {
     /// Fleet number (`MasinosNumeris`). Unique across the live fleet, and stable
@@ -122,16 +68,4 @@ public struct Vehicle: Sendable, Identifiable, Hashable {
     }
 
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
-}
-
-/// The feed's timebase is Europe/Vilnius, never the user's zone.
-public enum VilniusTime {
-    public static let zone = TimeZone(identifier: "Europe/Vilnius")!
-
-    /// Renders `MatavimoLaikas` back into a wall-clock string.
-    /// Values can exceed 86400 because GTFS service days run past midnight.
-    public static func clockString(secondsSinceMidnight s: Int) -> String {
-        let wrapped = ((s % 86400) + 86400) % 86400
-        return String(format: "%02d:%02d:%02d", wrapped / 3600, (wrapped / 60) % 60, wrapped % 60)
-    }
 }
