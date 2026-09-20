@@ -20,6 +20,24 @@ public final class FleetModel {
     /// data, rendered again" without comparing arrays.
     public private(set) var snapshotToken = 0
 
+    // MARK: - Selection
+
+    /// The fleet number of the selected vehicle, if any.
+    ///
+    /// Fleet numbers are stable across polls, which is what lets a selection
+    /// survive the fleet being replaced wholesale every few seconds.
+    public private(set) var selectedFleetNumber: String?
+
+    /// The selected vehicle in the current snapshot. Stored rather than computed:
+    /// finding it means walking ~390 vehicles, and SwiftUI would redo that on every
+    /// render pass.
+    public private(set) var selectedVehicle: Vehicle?
+
+    public func select(_ fleetNumber: String?) {
+        selectedFleetNumber = fleetNumber
+        selectedVehicle = fleetNumber.flatMap { id in vehicles.first { $0.id == id } }
+    }
+
     // MARK: - Derived once per snapshot
 
     /// Vehicles running a scheduled trip. The right denominator for any ratio: the
@@ -112,5 +130,22 @@ public final class FleetModel {
         modeCounts = counts
         inServiceCount = scheduled
         onTimePercentage = scheduled > 0 ? Double(onTime) / Double(scheduled) * 100 : nil
+        refreshSelection()
+    }
+
+    /// Re-points the selection at the new snapshot. A vehicle that has left the
+    /// feed — end of shift, usually — clears the selection rather than leaving a
+    /// stale one behind.
+    private func refreshSelection() {
+        guard let selectedFleetNumber else {
+            selectedVehicle = nil
+            return
+        }
+        guard let vehicle = vehicles.first(where: { $0.id == selectedFleetNumber }) else {
+            self.selectedFleetNumber = nil
+            selectedVehicle = nil
+            return
+        }
+        selectedVehicle = vehicle
     }
 }

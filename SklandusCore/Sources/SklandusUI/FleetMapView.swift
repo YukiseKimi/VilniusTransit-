@@ -27,6 +27,9 @@ public struct FleetMapView: FleetMapRepresentable {
     /// Changes when the resolver learns something, so markers that were drawn in
     /// fallback colours get repainted once their route is known.
     var appearanceToken: Int
+    /// The selected vehicle's fleet number, or nil. A binding because selection
+    /// can start either on the map or elsewhere in the interface.
+    @Binding var selection: String?
     /// How long a marker takes to travel to its new fix, matched to the poll.
     var glide: TimeInterval
     var emphasis: MKStandardMapConfiguration.EmphasisStyle
@@ -36,9 +39,11 @@ public struct FleetMapView: FleetMapRepresentable {
         resolver: TripResolver? = nil,
         dataToken: Int,
         appearanceToken: Int = 0,
+        selection: Binding<String?> = .constant(nil),
         glide: TimeInterval = 5,
         emphasis: MKStandardMapConfiguration.EmphasisStyle = .muted
     ) {
+        self._selection = selection
         self.vehicles = vehicles
         self.resolver = resolver
         self.dataToken = dataToken
@@ -108,6 +113,7 @@ public struct FleetMapView: FleetMapRepresentable {
         }
         context.coordinator.ingest(vehicles: vehicles, token: dataToken, glide: glide)
         context.coordinator.refreshAppearance(token: appearanceToken)
+        context.coordinator.syncSelection(to: selection)
     }
 
     // MARK: - Coordinator
@@ -122,6 +128,9 @@ public struct FleetMapView: FleetMapRepresentable {
         private var lastToken: Int?
         private var lastAppearanceToken: Int?
         private var tickTimer: Timer?
+        /// Set while the coordinator is driving MapKit, so its callbacks are not
+        /// mistaken for the user tapping.
+        private var isApplyingSelection = false
 
         /// 20 fps is smooth to the eye and a fraction of the work of matching the
         /// display's refresh rate, which nothing here needs.
@@ -192,7 +201,7 @@ public struct FleetMapView: FleetMapRepresentable {
                     annotation.routeLongName = resolved?.routeLongName
                 }
                 if let view = mapView.view(for: annotation) as? VehicleAnnotationView {
-                    view.applyAppearance(annotation, selected: false)
+                    view.applyAppearance(annotation, selected: id == parent.selection)
                 }
             }
         }
@@ -210,7 +219,7 @@ public struct FleetMapView: FleetMapRepresentable {
                 annotation.routeColorHex = resolved?.routeColor
                 annotation.routeLongName = resolved?.routeLongName
                 (mapView.view(for: annotation) as? VehicleAnnotationView)?
-                    .applyAppearance(annotation, selected: false)
+                    .applyAppearance(annotation, selected: annotation.fleetNumber == parent.selection)
             }
         }
 
@@ -249,6 +258,31 @@ public struct FleetMapView: FleetMapRepresentable {
             }
         }
 
+        // MARK: Selection
+
+        /// Mirrors a selection made elsewhere onto the map.
+        func syncSelection(to fleetNumber: String?) {
+            guard let mapView else { return }
+            let current = (mapView.selectedAnnotations.first as? VehicleAnnotation)?.fleetNumber
+            guard current != fleetNumber else { return }
+
+            isApplyingSelection = true
+            defer { isApplyingSelection = false }
+
+            if let fleetNumber, let annotation = annotations[fleetNumber] {
+                mapView.selectAnnotation(annotation, animated: true)
+                // Bring an off-screen choice into view rather than selecting
+                // something the reader cannot see.
+                if !mapView.visibleMapRect.contains(MKMapPoint(annotation.coordinate)) {
+                    mapView.setCenter(annotation.coordinate, animated: true)
+                }
+            } else {
+                for selected in mapView.selectedAnnotations {
+                    mapView.deselectAnnotation(selected, animated: true)
+                }
+            }
+        }
+
         // MARK: MKMapViewDelegate
 
         public func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
@@ -257,9 +291,21 @@ public struct FleetMapView: FleetMapRepresentable {
                 withIdentifier: VehicleAnnotationView.reuseIdentifier,
                 for: vehicle
             ) as? VehicleAnnotationView
-            view?.applyAppearance(vehicle, selected: false)
+            view?.applyAppearance(vehicle, selected: vehicle.fleetNumber == parent.selection)
             view?.applyMotion(vehicle)
             return view
+        }
+
+        public func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
+            guard !isApplyingSelection, let annotation = view.annotation as? VehicleAnnotation else { return }
+            parent.selection = annotation.fleetNumber
+            (view as? VehicleAnnotationView)?.applyAppearance(annotation, selected: true)
+        }
+
+        public func mapView(_ mapView: MKMapView, didDeselect view: MKAnnotationView) {
+            guard !isApplyingSelection, let annotation = view.annotation as? VehicleAnnotation else { return }
+            if parent.selection == annotation.fleetNumber { parent.selection = nil }
+            (view as? VehicleAnnotationView)?.applyAppearance(annotation, selected: false)
         }
     }
 }

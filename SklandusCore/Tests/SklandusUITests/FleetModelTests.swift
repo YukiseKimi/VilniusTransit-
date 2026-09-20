@@ -122,3 +122,99 @@ struct FleetModelTests {
         #expect(model.skippedRows == 3)
     }
 }
+
+@MainActor
+@Suite("Selection")
+struct FleetSelectionTests {
+
+    private func vehicle(_ id: String, tripID: String? = "A7-01") -> Vehicle {
+        Vehicle(
+            id: id, mode: .bus, route: "7",
+            coordinate: CLLocationCoordinate2D(latitude: 54.68, longitude: 25.27),
+            speed: 20, heading: 90, deviationSeconds: 0,
+            measuredAtSecondsSinceMidnight: 48000, headsign: "Test",
+            gtfsTripID: tripID, vehicleTypeCode: "KWZ"
+        )
+    }
+
+    private func snapshot(_ vehicles: [Vehicle]) -> VehicleFeedClient.Snapshot {
+        VehicleFeedClient.Snapshot(
+            vehicles: vehicles, receivedAt: Date(), skippedRows: 0, byteCount: 1000
+        )
+    }
+
+    @Test("selecting a vehicle finds it in the current fleet")
+    func selects() {
+        let model = FleetModel()
+        model.handle(.snapshot(snapshot([vehicle("4125"), vehicle("4126")])))
+        model.select("4126")
+        #expect(model.selectedFleetNumber == "4126")
+        #expect(model.selectedVehicle?.id == "4126")
+    }
+
+    /// The fleet is replaced wholesale every five seconds; the selection must not
+    /// be.
+    @Test("a selection survives new snapshots and follows the vehicle")
+    func survivesSnapshots() {
+        let model = FleetModel()
+        model.handle(.snapshot(snapshot([vehicle("4125")])))
+        model.select("4125")
+
+        var moved = vehicle("4125")
+        moved = Vehicle(
+            id: "4125", mode: .bus, route: "7",
+            coordinate: CLLocationCoordinate2D(latitude: 54.70, longitude: 25.30),
+            speed: 40, heading: 180, deviationSeconds: 30,
+            measuredAtSecondsSinceMidnight: 48005, headsign: "Test",
+            gtfsTripID: "A7-01", vehicleTypeCode: "KWZ"
+        )
+        model.handle(.snapshot(snapshot([moved])))
+
+        #expect(model.selectedFleetNumber == "4125")
+        #expect(model.selectedVehicle?.speed == 40)
+        #expect(model.selectedVehicle?.coordinate.latitude == 54.70)
+    }
+
+    /// End of shift: the vehicle stops being reported.
+    @Test("a vehicle leaving the feed clears the selection")
+    func clearsWhenVehicleLeaves() {
+        let model = FleetModel()
+        model.handle(.snapshot(snapshot([vehicle("4125"), vehicle("4126")])))
+        model.select("4125")
+
+        model.handle(.snapshot(snapshot([vehicle("4126")])))
+        #expect(model.selectedFleetNumber == nil)
+        #expect(model.selectedVehicle == nil)
+    }
+
+    /// A vehicle turning round at a terminus keeps its fleet number but starts a
+    /// new trip, which the drawn route has to follow.
+    @Test("a selected vehicle changing trip keeps the selection")
+    func survivesTripChange() {
+        let model = FleetModel()
+        model.handle(.snapshot(snapshot([vehicle("4125", tripID: "A7-01")])))
+        model.select("4125")
+
+        model.handle(.snapshot(snapshot([vehicle("4125", tripID: "A7-02")])))
+        #expect(model.selectedFleetNumber == "4125")
+        #expect(model.selectedVehicle?.gtfsTripID == "A7-02")
+    }
+
+    @Test("selecting nothing clears both the number and the vehicle")
+    func deselects() {
+        let model = FleetModel()
+        model.handle(.snapshot(snapshot([vehicle("4125")])))
+        model.select("4125")
+        model.select(nil)
+        #expect(model.selectedFleetNumber == nil)
+        #expect(model.selectedVehicle == nil)
+    }
+
+    @Test("selecting a vehicle that is not in the fleet selects nothing")
+    func unknownSelection() {
+        let model = FleetModel()
+        model.handle(.snapshot(snapshot([vehicle("4125")])))
+        model.select("9999")
+        #expect(model.selectedVehicle == nil)
+    }
+}
