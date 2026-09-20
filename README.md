@@ -13,6 +13,7 @@ launch; no features yet.
 
 ```bash
 ./Scripts/check.sh          # tests + both app builds + lint. Run before committing.
+swift run --package-path SklandusCore feedcheck   # poll the live feed, no GUI
 open Sklandus.xcodeproj     # Mac and iPad targets
 ```
 

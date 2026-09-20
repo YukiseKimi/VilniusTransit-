@@ -20,6 +20,12 @@ let package = Package(
             dependencies: ["SklandusKit"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
+        // Diagnostics against the live server. Not part of either app.
+        .executableTarget(
+            name: "feedcheck",
+            dependencies: ["SklandusKit"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .testTarget(
             name: "SklandusKitTests",
             dependencies: ["SklandusKit"],
