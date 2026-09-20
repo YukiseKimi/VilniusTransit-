@@ -1,0 +1,9 @@
+# Test-only relaxations.
+#
+# Test cases embed real rows from the live feed verbatim. Wrapping them would
+# make it harder to compare a fixture against what the server actually sends,
+# so long lines are allowed here and nowhere else.
+line_length:
+  warning: 260
+  error: 300
+  ignores_comments: true

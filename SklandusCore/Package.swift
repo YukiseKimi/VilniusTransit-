@@ -23,6 +23,7 @@ let package = Package(
         .testTarget(
             name: "SklandusKitTests",
             dependencies: ["SklandusKit"],
+            resources: [.copy("Fixtures")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]

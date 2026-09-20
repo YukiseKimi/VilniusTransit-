@@ -33,6 +33,13 @@ opt_in_rules:
   - vertical_parameter_alignment_on_call
   - yoda_condition
 
+disabled_rules:
+  # Suggests the failable String(bytes:encoding:) instead of String(decoding:as:).
+  # The parsers decode UTF-8 byte buffers, where String(decoding:) is both correct
+  # and non-failable; the "safer" alternative would add an optional that can never
+  # be nil and cost a copy on a hot path.
+  - optional_data_string_conversion
+
 analyzer_rules:
   - unused_import
 
