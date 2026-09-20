@@ -11,9 +11,15 @@ import SklandusKit
 @main
 struct FeedCheck {
     static func main() async {
-        if CommandLine.arguments.dropFirst().first == "gtfs" {
+        switch CommandLine.arguments.dropFirst().first {
+        case "gtfs":
             await TimetableCheck.run()
             return
+        case "store":
+            await StoreCheck.run()
+            return
+        default:
+            break
         }
         let client = VehicleFeedClient(pollInterval: .seconds(5))
         print("Polling \(URL.vilniusLiveFeed.absoluteString)\n")
