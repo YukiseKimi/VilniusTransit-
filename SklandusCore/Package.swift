@@ -27,6 +27,11 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
+            name: "SklandusUITests",
+            dependencies: ["SklandusUI"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
             name: "SklandusKitTests",
             dependencies: ["SklandusKit"],
             resources: [.copy("Fixtures")],
