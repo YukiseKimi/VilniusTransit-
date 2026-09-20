@@ -5,6 +5,7 @@ import SklandusKit
 /// running, and how much of it is on time.
 struct FleetStatusBar: View {
     let model: FleetModel
+    let timetable: TimetableStatus
 
     var body: some View {
         HStack {
@@ -25,6 +26,10 @@ struct FleetStatusBar: View {
                         .monospacedDigit()
                         .help("Of the \(model.inServiceCount) running a scheduled trip")
                 }
+                Divider().frame(height: 12)
+                Text(timetableText)
+                    .foregroundStyle(timetableIsHealthy ? .secondary : .primary)
+                    .help("Routes and stations are stored in full; trips arrive as vehicles need them.")
             }
         }
         .font(.caption)
@@ -32,6 +37,22 @@ struct FleetStatusBar: View {
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(.separator))
         .padding(.bottom)
+    }
+
+    private var timetableText: String {
+        switch timetable {
+        case .loading:
+            return "Timetable loading…"
+        case .ready(let routes, _):
+            return "\(routes) routes"
+        case .failed:
+            return "Timetable unavailable"
+        }
+    }
+
+    private var timetableIsHealthy: Bool {
+        if case .failed = timetable { return false }
+        return true
     }
 
     private var statusColor: Color {

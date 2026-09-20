@@ -18,21 +18,31 @@ typealias FleetMapRepresentable = UIViewRepresentable
 public struct FleetMapView: FleetMapRepresentable {
 
     var vehicles: [Vehicle]
+    /// Trip details held in memory. Read once per marker, so it has to answer
+    /// synchronously.
+    var resolver: TripResolver?
     /// Changes when the fleet is genuinely new, so a redraw does not re-ingest the
     /// same snapshot.
     var dataToken: Int
+    /// Changes when the resolver learns something, so markers that were drawn in
+    /// fallback colours get repainted once their route is known.
+    var appearanceToken: Int
     /// How long a marker takes to travel to its new fix, matched to the poll.
     var glide: TimeInterval
     var emphasis: MKStandardMapConfiguration.EmphasisStyle
 
     public init(
         vehicles: [Vehicle],
+        resolver: TripResolver? = nil,
         dataToken: Int,
+        appearanceToken: Int = 0,
         glide: TimeInterval = 5,
         emphasis: MKStandardMapConfiguration.EmphasisStyle = .muted
     ) {
         self.vehicles = vehicles
+        self.resolver = resolver
         self.dataToken = dataToken
+        self.appearanceToken = appearanceToken
         self.glide = glide
         self.emphasis = emphasis
     }
@@ -97,6 +107,7 @@ public struct FleetMapView: FleetMapRepresentable {
             mapView.preferredConfiguration = MKStandardMapConfiguration(emphasisStyle: emphasis)
         }
         context.coordinator.ingest(vehicles: vehicles, token: dataToken, glide: glide)
+        context.coordinator.refreshAppearance(token: appearanceToken)
     }
 
     // MARK: - Coordinator
@@ -109,6 +120,7 @@ public struct FleetMapView: FleetMapRepresentable {
         private var interpolator = FleetInterpolator()
         private var annotations: [String: VehicleAnnotation] = [:]
         private var lastToken: Int?
+        private var lastAppearanceToken: Int?
         private var tickTimer: Timer?
 
         /// 20 fps is smooth to the eye and a fraction of the work of matching the
@@ -155,10 +167,13 @@ public struct FleetMapView: FleetMapRepresentable {
             incoming.reserveCapacity(diff.added.count)
             for id in diff.added {
                 guard let track = interpolator.track(id) else { continue }
+                let resolved = parent.resolver?.resolved(track.vehicle.gtfsTripID)
                 let annotation = VehicleAnnotation(
                     vehicle: track.vehicle,
                     coordinate: track.coordinate(at: now),
-                    heading: track.heading(at: now)
+                    heading: track.heading(at: now),
+                    routeColorHex: resolved?.routeColor,
+                    routeLongName: resolved?.routeLongName
                 )
                 annotations[id] = annotation
                 incoming.append(annotation)
@@ -167,10 +182,35 @@ public struct FleetMapView: FleetMapRepresentable {
 
             for id in diff.updated {
                 guard let annotation = annotations[id], let track = interpolator.track(id) else { continue }
+                // A vehicle turning round at a terminus keeps its fleet number but
+                // starts a new trip, so its route can change underneath it.
+                let previousTrip = annotation.vehicle.gtfsTripID
                 annotation.vehicle = track.vehicle
+                if previousTrip != track.vehicle.gtfsTripID {
+                    let resolved = parent.resolver?.resolved(track.vehicle.gtfsTripID)
+                    annotation.routeColorHex = resolved?.routeColor
+                    annotation.routeLongName = resolved?.routeLongName
+                }
                 if let view = mapView.view(for: annotation) as? VehicleAnnotationView {
                     view.applyAppearance(annotation, selected: false)
                 }
+            }
+        }
+
+        /// Repaints markers once the resolver has learned their routes. Hydration
+        /// arrives after the vehicles do, so the first sight of a vehicle is often
+        /// in fallback colours.
+        func refreshAppearance(token: Int) {
+            guard token != lastAppearanceToken, let mapView, let resolver = parent.resolver else { return }
+            lastAppearanceToken = token
+
+            for (_, annotation) in annotations {
+                let resolved = resolver.resolved(annotation.vehicle.gtfsTripID)
+                guard annotation.routeColorHex != resolved?.routeColor else { continue }
+                annotation.routeColorHex = resolved?.routeColor
+                annotation.routeLongName = resolved?.routeLongName
+                (mapView.view(for: annotation) as? VehicleAnnotationView)?
+                    .applyAppearance(annotation, selected: false)
             }
         }
 
