@@ -1,0 +1,89 @@
+# Tuned to AGENTS.md. Rules here enforce what that file asks for; anything it
+# does not mention is left at SwiftLint's default.
+
+included:
+  - SklandusCore/Sources
+  - SklandusCore/Tests
+  - Apps
+
+excluded:
+  - .build
+  - SklandusCore/.build
+
+opt_in_rules:
+  # AGENTS.md: prefer Swift-native and modern Foundation APIs.
+  - contains_over_filter_count
+  - contains_over_first_not_nil
+  - empty_count
+  - first_where
+  - last_where
+  - sorted_first_last
+  - toggle_bool
+  # AGENTS.md: avoid force unwraps and force try.
+  - force_unwrapping
+  # Readability rules that match the house style.
+  - closure_spacing
+  - explicit_init
+  - joined_default_parameter
+  - literal_expression_end_indentation
+  - multiline_parameters
+  - operator_usage_whitespace
+  - redundant_nil_coalescing
+  - unneeded_parentheses_in_closure_argument
+  - vertical_parameter_alignment_on_call
+  - yoda_condition
+
+analyzer_rules:
+  - unused_import
+
+# AGENTS.md forbids these outright, so they are errors rather than warnings.
+custom_rules:
+  no_observable_object:
+    name: "ObservableObject is banned"
+    regex: '\b(ObservableObject|@Published|@StateObject|@ObservedObject|@EnvironmentObject)\b'
+    message: "AGENTS.md: use @Observable classes with @State/@Bindable/@Environment."
+    severity: error
+  no_legacy_formatters:
+    name: "Legacy Formatter subclasses are banned"
+    regex: '\b(DateFormatter|NumberFormatter|MeasurementFormatter)\s*\('
+    message: "AGENTS.md: use the FormatStyle API instead."
+    severity: error
+  no_c_string_format:
+    name: "C-style number formatting is banned"
+    regex: 'String\(format:'
+    message: "AGENTS.md: use FormatStyle, e.g. value.formatted(.number.precision(...))."
+    severity: error
+  no_gcd:
+    name: "Grand Central Dispatch is banned"
+    regex: '\bDispatchQueue\s*(\.|\()'
+    message: "AGENTS.md: use Swift concurrency instead."
+    severity: error
+  no_foreground_color:
+    name: "foregroundColor is deprecated"
+    regex: '\.foregroundColor\('
+    message: "AGENTS.md: use foregroundStyle()."
+    severity: error
+  no_corner_radius:
+    name: "cornerRadius is deprecated"
+    regex: '\.cornerRadius\('
+    message: "AGENTS.md: use clipShape(.rect(cornerRadius:))."
+    severity: error
+  no_sleep_nanoseconds:
+    name: "Task.sleep(nanoseconds:) is banned"
+    regex: 'Task\.sleep\(nanoseconds:'
+    message: "AGENTS.md: use Task.sleep(for:)."
+    severity: error
+
+line_length:
+  warning: 110
+  error: 140
+  ignores_comments: false
+
+identifier_name:
+  min_length: 2
+
+type_body_length:
+  warning: 250
+
+file_length:
+  warning: 400
