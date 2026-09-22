@@ -15,6 +15,7 @@ final class MarkerImages {
 
     private var badges: [Int: CGImage] = [:]
     private var arrows: [Int: CGImage] = [:]
+    private var dots: [Int: CGImage] = [:]
     private var scale: CGFloat = 2
 
     private init() {}
@@ -25,6 +26,7 @@ final class MarkerImages {
         scale = newScale
         badges.removeAll(keepingCapacity: true)
         arrows.removeAll(keepingCapacity: true)
+        dots.removeAll(keepingCapacity: true)
     }
 
     // MARK: - Palette
@@ -137,6 +139,38 @@ final class MarkerImages {
             ctx.strokePath()
         }
         arrows[fill.key] = image
+        return image
+    }
+
+    // MARK: - Station dot
+
+    static func stationDotSize(terminus: Bool) -> CGSize {
+        let diameter: CGFloat = terminus ? 14 : 10
+        return CGSize(width: diameter, height: diameter)
+    }
+
+    /// Termini draw hollow, so the ends of a route read at a glance.
+    func stationDot(fill: RGBA, terminus: Bool) -> CGImage? {
+        var hasher = Hasher()
+        hasher.combine(fill.key)
+        hasher.combine(terminus)
+        let key = hasher.finalize()
+        if let cached = dots[key] { return cached }
+
+        let size = Self.stationDotSize(terminus: terminus)
+        let image = Bitmap.image(size: size, scale: scale) { ctx in
+            let rect = CGRect(origin: .zero, size: size).insetBy(dx: 1.5, dy: 1.5)
+            ctx.setShadow(offset: .zero, blur: 2, color: RGBA.black.withAlpha(0.4).cgColor)
+            ctx.setFillColor(RGBA.white.cgColor)
+            ctx.fillEllipse(in: CGRect(origin: .zero, size: size))
+            ctx.setShadow(offset: .zero, blur: 0, color: nil)
+            ctx.setFillColor(terminus ? RGBA.white.cgColor : fill.cgColor)
+            ctx.fillEllipse(in: rect)
+            ctx.setStrokeColor(fill.cgColor)
+            ctx.setLineWidth(terminus ? 3 : 1.5)
+            ctx.strokeEllipse(in: rect.insetBy(dx: 0.75, dy: 0.75))
+        }
+        dots[key] = image
         return image
     }
 }

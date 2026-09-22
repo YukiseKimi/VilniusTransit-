@@ -16,6 +16,9 @@ public final class AppServices {
     public let fleet: FleetModel
     public let resolver: TripResolver
     public private(set) var timetableStatus: TimetableStatus = .loading
+    /// Stations the selected vehicle will call at, in order. Empty when nothing is
+    /// selected, or while its trip is still hydrating.
+    public private(set) var selectedStops: [GTFSStation] = []
 
     private let store: TimetableStore
     private let archives: ArchiveCache
@@ -81,6 +84,20 @@ public final class AppServices {
         await resolver.observe(fleet.vehicles)
         // Trips cached before their shape was hydrated get their path filled in.
         await resolver.refreshIncomplete()
+    }
+
+    /// Reloads the stops for whatever is selected. Cheap when nothing changed:
+    /// the station ids are compared before the store is touched.
+    public func refreshSelectedStops() async {
+        guard let tripID = fleet.selectedVehicle?.gtfsTripID,
+              let resolved = resolver.resolved(tripID),
+              !resolved.stationIDs.isEmpty
+        else {
+            if !selectedStops.isEmpty { selectedStops = [] }
+            return
+        }
+        guard selectedStops.map(\.id) != resolved.stationIDs else { return }
+        selectedStops = (try? await store.stations(ids: resolved.stationIDs)) ?? []
     }
 
     private func loadTimetable() async {

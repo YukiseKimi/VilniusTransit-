@@ -30,6 +30,10 @@ public struct FleetMapView: FleetMapRepresentable {
     /// The selected vehicle's fleet number, or nil. A binding because selection
     /// can start either on the map or elsewhere in the interface.
     @Binding var selection: String?
+    /// Stations the selected vehicle calls at, in order. Only the selection's
+    /// stops are drawn: all 845 at once puts ~990 overlapping dots in the default
+    /// view, where one route's worth is 13 to 40 and every one means something.
+    var stops: [GTFSStation]
     /// How long a marker takes to travel to its new fix, matched to the poll.
     var glide: TimeInterval
     var emphasis: MKStandardMapConfiguration.EmphasisStyle
@@ -40,10 +44,12 @@ public struct FleetMapView: FleetMapRepresentable {
         dataToken: Int,
         appearanceToken: Int = 0,
         selection: Binding<String?> = .constant(nil),
+        stops: [GTFSStation] = [],
         glide: TimeInterval = 5,
         emphasis: MKStandardMapConfiguration.EmphasisStyle = .muted
     ) {
         self._selection = selection
+        self.stops = stops
         self.vehicles = vehicles
         self.resolver = resolver
         self.dataToken = dataToken
@@ -91,6 +97,10 @@ public struct FleetMapView: FleetMapRepresentable {
             VehicleAnnotationView.self,
             forAnnotationViewWithReuseIdentifier: VehicleAnnotationView.reuseIdentifier
         )
+        mapView.register(
+            StationAnnotationView.self,
+            forAnnotationViewWithReuseIdentifier: StationAnnotationView.reuseIdentifier
+        )
         mapView.setRegion(
             MKCoordinateRegion(
                 center: Self.vilnius,
@@ -114,5 +124,12 @@ public struct FleetMapView: FleetMapRepresentable {
         context.coordinator.ingest(vehicles: vehicles, token: dataToken, glide: glide)
         context.coordinator.refreshAppearance(token: appearanceToken)
         context.coordinator.syncSelection(to: selection)
+        context.coordinator.syncStops(stops, colorHex: selectedRouteColor)
+    }
+
+    /// The colour the selected route publishes, so its stops match its line.
+    private var selectedRouteColor: String? {
+        guard let selection, let resolver else { return nil }
+        return resolver.resolved(vehicles.first { $0.id == selection }?.gtfsTripID)?.routeColor
     }
 }

@@ -18,6 +18,7 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
     private var lastAppearanceToken: Int?
     private var tickTimer: Timer?
     private var routeOverlay: RoutePolyline?
+    private var stationAnnotations: [StationAnnotation] = []
     /// Set while the coordinator is driving MapKit, so its callbacks are not
     /// mistaken for the user tapping.
     private var isApplyingSelection = false
@@ -212,6 +213,29 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
         routeOverlay = polyline
     }
 
+    /// Replaces the stops on the map when the selection's route changes.
+    func syncStops(_ stops: [GTFSStation], colorHex: String?) {
+        guard let mapView else { return }
+        let current = stationAnnotations.map(\.station.id)
+        guard current != stops.map(\.id) else { return }
+
+        if !stationAnnotations.isEmpty {
+            mapView.removeAnnotations(stationAnnotations)
+            stationAnnotations = []
+        }
+        guard !stops.isEmpty else { return }
+
+        stationAnnotations = stops.enumerated().map { offset, station in
+            StationAnnotation(
+                station: station,
+                sequence: offset + 1,
+                total: stops.count,
+                colorHex: colorHex
+            )
+        }
+        mapView.addAnnotations(stationAnnotations)
+    }
+
     /// Re-checks the drawn path after hydration, for a vehicle selected before
     /// its route was known.
     func refreshRouteOverlay() {
@@ -241,6 +265,14 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
     }
 
     public func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+        if let station = annotation as? StationAnnotation {
+            let view = mapView.dequeueReusableAnnotationView(
+                withIdentifier: StationAnnotationView.reuseIdentifier,
+                for: station
+            ) as? StationAnnotationView
+            view?.apply(station)
+            return view
+        }
         guard let vehicle = annotation as? VehicleAnnotation else { return nil }
         let view = mapView.dequeueReusableAnnotationView(
             withIdentifier: VehicleAnnotationView.reuseIdentifier,
@@ -252,12 +284,14 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
     }
 
     public func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
+        if view.annotation is StationAnnotation { return }
         guard !isApplyingSelection, let annotation = view.annotation as? VehicleAnnotation else { return }
         parent.selection = annotation.fleetNumber
         (view as? VehicleAnnotationView)?.applyAppearance(annotation, selected: true)
     }
 
     public func mapView(_ mapView: MKMapView, didDeselect view: MKAnnotationView) {
+        if view.annotation is StationAnnotation { return }
         guard !isApplyingSelection, let annotation = view.annotation as? VehicleAnnotation else { return }
         if parent.selection == annotation.fleetNumber { parent.selection = nil }
         (view as? VehicleAnnotationView)?.applyAppearance(annotation, selected: false)

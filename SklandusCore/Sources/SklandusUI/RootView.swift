@@ -14,7 +14,8 @@ public struct RootView: View {
             resolver: services.resolver,
             dataToken: services.fleet.snapshotToken,
             appearanceToken: services.resolver.revision,
-            selection: $selection
+            selection: $selection,
+            stops: services.selectedStops
         )
         .ignoresSafeArea()
         .overlay(alignment: .bottom) {
@@ -22,7 +23,13 @@ public struct RootView: View {
         }
         .task { services.start() }
         // Each new snapshot brings trips the resolver may not know yet.
-        .task(id: services.fleet.snapshotToken) { await services.refreshTrips() }
+        .task(id: services.fleet.snapshotToken) {
+            await services.refreshTrips()
+            // A vehicle that turned round at a terminus calls at different stops.
+            await services.refreshSelectedStops()
+        }
+        .task(id: selection) { await services.refreshSelectedStops() }
+        .task(id: services.resolver.revision) { await services.refreshSelectedStops() }
         .onChange(of: selection) { _, new in services.fleet.select(new) }
         // A selected vehicle can leave the feed at the end of its shift.
         .onChange(of: services.fleet.selectedFleetNumber) { _, new in
