@@ -13,15 +13,16 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
     private weak var mapView: MKMapView?
 
     private var interpolator = FleetInterpolator()
+    private var stationAnnotations: [StationAnnotation] = []
     private var annotations: [String: VehicleAnnotation] = [:]
     private var lastToken: Int?
     private var lastAppearanceToken: Int?
     private var tickTimer: Timer?
     private var routeOverlay: RoutePolyline?
-    private var stationAnnotations: [StationAnnotation] = []
     /// Set while the coordinator is driving MapKit, so its callbacks are not
     /// mistaken for the user tapping.
     private var isApplyingSelection = false
+    private let follower = VehicleFollower()
 
     /// 20 fps is smooth to the eye and a fraction of the work of matching the
     /// display's refresh rate, which nothing here needs.
@@ -129,6 +130,7 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
     private func tick() {
         guard let mapView, !annotations.isEmpty else { return }
         let now = Date()
+        followSelection(on: mapView, at: now)
 
         // Only animate what can actually be seen. Vehicles panned off-screen
         // keep their data current but cost nothing to draw.
@@ -159,6 +161,22 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
         }
     }
 
+    /// Keeps the selected vehicle in view; the follower decides when.
+    private func followSelection(on mapView: MKMapView, at now: Date) {
+        guard let fleetNumber = parent.selection, let track = interpolator.track(fleetNumber) else {
+            follower.reset()
+            return
+        }
+        let decision = follower.update(
+            fleetNumber: fleetNumber,
+            following: parent.following,
+            coordinate: track.coordinate(at: now),
+            on: mapView,
+            at: now
+        )
+        if decision == .release { parent.following = false }
+    }
+
     // MARK: Selection
 
     /// Mirrors a selection made elsewhere onto the map.
@@ -166,7 +184,10 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
         guard let mapView else { return }
         updateRouteOverlay(for: fleetNumber, on: mapView)
 
-        let current = (mapView.selectedAnnotations.first as? VehicleAnnotation)?.fleetNumber
+        let selected = mapView.selectedAnnotations.first
+        // A stop's callout, opened while its vehicle stays selected.
+        if selected is StationAnnotation, fleetNumber != nil { return }
+        let current = (selected as? VehicleAnnotation)?.fleetNumber
         guard current != fleetNumber else { return }
 
         isApplyingSelection = true
@@ -245,6 +266,14 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
 
     // MARK: MKMapViewDelegate
 
+    public func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
+        follower.regionWillChange()
+    }
+
+    public func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+        follower.regionDidChange()
+    }
+
     public func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
         guard let route = overlay as? RoutePolyline else {
             return MKOverlayRenderer(overlay: overlay)
@@ -293,7 +322,16 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
     public func mapView(_ mapView: MKMapView, didDeselect view: MKAnnotationView) {
         if view.annotation is StationAnnotation { return }
         guard !isApplyingSelection, let annotation = view.annotation as? VehicleAnnotation else { return }
-        if parent.selection == annotation.fleetNumber { parent.selection = nil }
-        (view as? VehicleAnnotationView)?.applyAppearance(annotation, selected: false)
+        // MapKit selects one annotation at a time, so tapping one of the selected
+        // vehicle's stops deselects the vehicle first. Wait to see what was
+        // tapped: a stop keeps the vehicle selected, anything else clears it.
+        Task { @MainActor [weak self, weak mapView, weak view] in
+            guard let self, let mapView else { return }
+            if mapView.selectedAnnotations.contains(where: { $0 is StationAnnotation }) { return }
+            if self.parent.selection == annotation.fleetNumber { self.parent.selection = nil }
+            (view as? VehicleAnnotationView)?.applyAppearance(
+                annotation, selected: self.parent.selection == annotation.fleetNumber
+            )
+        }
     }
 }

@@ -30,6 +30,9 @@ public struct FleetMapView: FleetMapRepresentable {
     /// The selected vehicle's fleet number, or nil. A binding because selection
     /// can start either on the map or elsewhere in the interface.
     @Binding var selection: String?
+    /// Whether the map keeps the selected vehicle in view. The map switches it off
+    /// itself when the reader moves the map away from the vehicle.
+    @Binding var following: Bool
     /// Stations the selected vehicle calls at, in order. Only the selection's
     /// stops are drawn: all 845 at once puts ~990 overlapping dots in the default
     /// view, where one route's worth is 13 to 40 and every one means something.
@@ -44,11 +47,13 @@ public struct FleetMapView: FleetMapRepresentable {
         dataToken: Int,
         appearanceToken: Int = 0,
         selection: Binding<String?> = .constant(nil),
+        following: Binding<Bool> = .constant(false),
         stops: [GTFSStation] = [],
         glide: TimeInterval = 5,
         emphasis: MKStandardMapConfiguration.EmphasisStyle = .muted
     ) {
         self._selection = selection
+        self._following = following
         self.stops = stops
         self.vehicles = vehicles
         self.resolver = resolver

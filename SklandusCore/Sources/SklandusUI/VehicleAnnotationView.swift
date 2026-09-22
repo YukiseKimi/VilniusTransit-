@@ -29,7 +29,9 @@ final class VehicleAnnotationView: MKAnnotationView {
     override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
         super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
         frame = CGRect(x: 0, y: 0, width: 44, height: 44)
-        canShowCallout = true
+        // The inspector shows everything a callout would, and a callout sitting
+        // over the map would hide the streets around the vehicle.
+        canShowCallout = false
         displayPriority = .required
 
         let host = hostLayer
