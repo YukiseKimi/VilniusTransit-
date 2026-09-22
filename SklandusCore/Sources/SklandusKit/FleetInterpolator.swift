@@ -21,19 +21,26 @@ public struct FleetInterpolator: Sendable {
     /// - Parameter glide: how long markers take to travel to the new fix. Matching
     ///   this to the poll interval keeps motion continuous; a little under it lets
     ///   each leg finish before the next arrives.
+    /// - Parameter path: the route path to place a vehicle on, when its trip's
+    ///   shape is known. Vehicles without one are drawn where the feed puts them.
     @discardableResult
-    public mutating func apply(_ vehicles: [Vehicle], now: Date = Date(), glide: TimeInterval) -> Diff {
+    public mutating func apply(
+        _ vehicles: [Vehicle],
+        now: Date = Date(),
+        glide: TimeInterval,
+        path: (Vehicle) -> RoutePath? = { _ in nil }
+    ) -> Diff {
         var diff = Diff()
         var seen = Set<String>(minimumCapacity: vehicles.count)
 
         for vehicle in vehicles {
             seen.insert(vehicle.id)
             if var existing = tracks[vehicle.id] {
-                existing.update(with: vehicle, now: now, over: glide)
+                existing.update(with: vehicle, now: now, over: glide, path: path(vehicle))
                 tracks[vehicle.id] = existing
                 diff.updated.append(vehicle.id)
             } else {
-                tracks[vehicle.id] = VehicleTrack(vehicle: vehicle, now: now)
+                tracks[vehicle.id] = VehicleTrack(vehicle: vehicle, now: now, path: path(vehicle))
                 diff.added.append(vehicle.id)
             }
         }

@@ -13,7 +13,10 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
     private weak var mapView: MKMapView?
 
     private var interpolator = FleetInterpolator()
-    private var stationAnnotations: [StationAnnotation] = []
+    /// Route paths, so vehicles can be drawn on their roads rather than where
+    /// their GPS puts them.
+    private let routePaths = RoutePathCache()
+    private let stops = StopLayer()
     private var annotations: [String: VehicleAnnotation] = [:]
     private var lastToken: Int?
     private var lastAppearanceToken: Int?
@@ -57,7 +60,11 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
         lastToken = token
 
         let now = Date()
-        let diff = interpolator.apply(vehicles, now: now, glide: glide)
+        let diff = interpolator.apply(vehicles, now: now, glide: glide) { vehicle in
+            guard let tripID = vehicle.gtfsTripID, let resolver = parent.resolver else { return nil }
+            return routePaths.path(for: tripID) { resolver.resolved(tripID)?.path ?? [] }
+        }
+        routePaths.keep(only: Set(vehicles.compactMap(\.gtfsTripID)))
         guard !diff.isEmpty else { return }
 
         if !diff.removed.isEmpty {
@@ -234,27 +241,10 @@ public final class FleetMapCoordinator: NSObject, MKMapViewDelegate {
         routeOverlay = polyline
     }
 
-    /// Replaces the stops on the map when the selection's route changes.
-    func syncStops(_ stops: [GTFSStation], colorHex: String?) {
+    /// Replaces the stops drawn for the selection.
+    func syncStops(_ stations: [GTFSStation], colorHex: String?) {
         guard let mapView else { return }
-        let current = stationAnnotations.map(\.station.id)
-        guard current != stops.map(\.id) else { return }
-
-        if !stationAnnotations.isEmpty {
-            mapView.removeAnnotations(stationAnnotations)
-            stationAnnotations = []
-        }
-        guard !stops.isEmpty else { return }
-
-        stationAnnotations = stops.enumerated().map { offset, station in
-            StationAnnotation(
-                station: station,
-                sequence: offset + 1,
-                total: stops.count,
-                colorHex: colorHex
-            )
-        }
-        mapView.addAnnotations(stationAnnotations)
+        stops.sync(stations, colorHex: colorHex, on: mapView)
     }
 
     /// Re-checks the drawn path after hydration, for a vehicle selected before

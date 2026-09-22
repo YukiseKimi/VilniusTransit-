@@ -192,4 +192,101 @@ struct TeleportTests {
         #expect(FeedClock.interval(from: 86390, to: 90000) == 3610)
         #expect(FeedClock.interval(from: 49505, to: 49500) == nil)
     }
+
+    // MARK: - Matched to the route
+
+    private static let metre = 1.0 / 111_320
+    private static let eastMetre = 1.0 / (111_320 * cos(54.68 * .pi / 180))
+
+    /// A kilometre east, then a kilometre north.
+    private func corner() -> RoutePath {
+        RoutePath(coordinates: [
+            CLLocationCoordinate2D(latitude: 54.68, longitude: 25.27),
+            CLLocationCoordinate2D(latitude: 54.68, longitude: 25.27 + 1000 * Self.eastMetre),
+            CLLocationCoordinate2D(
+                latitude: 54.68 + 1000 * Self.metre,
+                longitude: 25.27 + 1000 * Self.eastMetre
+            )
+        ])
+    }
+
+    private func beside(_ metresAlong: Double, off: Double, seconds: Int) -> Vehicle {
+        Vehicle(
+            id: "8008", mode: .bus, route: "7",
+            coordinate: CLLocationCoordinate2D(
+                latitude: 54.68 + off * Self.metre,
+                longitude: 25.27 + metresAlong * Self.eastMetre
+            ),
+            speed: 30, heading: 90, deviationSeconds: 0,
+            measuredAtSecondsSinceMidnight: seconds, headsign: "Test",
+            gtfsTripID: "A7-01", vehicleTypeCode: "KWZ"
+        )
+    }
+
+    @Test("a fix beside the road is drawn on it")
+    func snapsToPath() {
+        let t0 = Date()
+        let track = VehicleTrack(vehicle: beside(500, off: 20, seconds: 48000), now: t0, path: corner())
+        #expect(track.isMatchedToRoute)
+        #expect(abs(track.coordinate(at: t0).latitude - 54.68) < 0.00001)
+    }
+
+    @Test("a fix far from the route is left where the feed put it")
+    func keepsDistantFix() {
+        let t0 = Date()
+        let strayed = beside(500, off: 300, seconds: 48000)
+        let track = VehicleTrack(vehicle: strayed, now: t0, path: corner())
+        #expect(!track.isMatchedToRoute)
+        #expect(track.coordinate(at: t0).latitude == strayed.coordinate.latitude)
+    }
+
+    @Test("between fixes the marker travels round the bend, not across it")
+    func followsTheBend() {
+        let t0 = Date()
+        let path = corner()
+        var track = VehicleTrack(vehicle: beside(900, off: 5, seconds: 48000), now: t0, path: path)
+        // 200 m on: 100 m up the second leg, round the corner.
+        let next = Vehicle(
+            id: "8008", mode: .bus, route: "7",
+            coordinate: CLLocationCoordinate2D(
+                latitude: 54.68 + 100 * Self.metre,
+                longitude: 25.27 + 1000 * Self.eastMetre
+            ),
+            speed: 30, heading: 0, deviationSeconds: 0,
+            measuredAtSecondsSinceMidnight: 48010, headsign: "Test",
+            gtfsTripID: "A7-01", vehicleTypeCode: "KWZ"
+        )
+        track.update(with: next, now: t0, over: 5, path: path)
+        #expect(track.isMatchedToRoute)
+
+        // Halfway through the leg the vehicle is at the corner itself, which a
+        // straight line between the two fixes would have cut.
+        let middle = track.coordinate(at: t0.addingTimeInterval(2.5))
+        #expect(abs(middle.longitude - (25.27 + 1000 * Self.eastMetre)) < 0.00002)
+        #expect(abs(middle.latitude - 54.68) < 0.0001)
+        // And it points along the road it is on, not at its destination.
+        #expect(abs(track.heading(at: t0.addingTimeInterval(4)) ) < 1)
+    }
+
+    @Test("a vehicle never slides backwards on noise at a standstill")
+    func ignoresBacktrack() {
+        let t0 = Date()
+        let path = corner()
+        var track = VehicleTrack(vehicle: beside(500, off: 2, seconds: 48000), now: t0, path: path)
+        track.update(with: beside(495, off: 2, seconds: 48005), now: t0, over: 5, path: path)
+        let settled = track.coordinate(at: t0.addingTimeInterval(5))
+        #expect(abs(settled.longitude - (25.27 + 500 * Self.eastMetre)) < 0.00002)
+    }
+
+    @Test("a vehicle that leaves its route is drawn where it actually is")
+    func fallsBackWhenDiverted() {
+        let t0 = Date()
+        let path = corner()
+        var track = VehicleTrack(vehicle: beside(500, off: 2, seconds: 48000), now: t0, path: path)
+        let diverted = beside(500, off: 250, seconds: 48005)
+        track.update(with: diverted, now: t0, over: 5, path: path)
+        #expect(!track.isMatchedToRoute)
+        let settled = track.coordinate(at: t0.addingTimeInterval(5))
+        #expect(abs(settled.latitude - diverted.coordinate.latitude) < 0.00001)
+    }
 }

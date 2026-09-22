@@ -23,6 +23,20 @@ public struct VehicleTrack: Sendable {
     /// Fallback when two fixes are close enough in time that implied speed is noise.
     private static let teleportThresholdMeters: CLLocationDistance = 400
 
+    /// A fix further than this from the route's own path is not that route's
+    /// vehicle rounding a corner — it is a diversion, a depot run, or a fix too
+    /// poor to trust. Matching is abandoned and the raw position drawn.
+    private static let maxMatchOffset: CLLocationDistance = 45
+
+    /// How far either side of the last match to look for the next one. Wide
+    /// enough for a bus at 90 km/h between fixes, narrow enough that it cannot
+    /// land on the opposite carriageway where the route doubles back.
+    private static let matchWindow: CLLocationDistance = 400
+
+    /// Vehicles do not reverse; this much apparent backwards movement is GPS
+    /// noise at a standstill, and more than it means the match was wrong.
+    private static let maxBacktrack: CLLocationDistance = 30
+
     public private(set) var vehicle: Vehicle
 
     private var fromCoordinate: CLLocationCoordinate2D
@@ -32,7 +46,18 @@ public struct VehicleTrack: Sendable {
     private var startedAt: Date
     private var duration: TimeInterval
 
-    public init(vehicle: Vehicle, now: Date = Date()) {
+    /// The path this vehicle's trip follows, once the timetable has produced it.
+    private var path: RoutePath?
+    /// Metres along that path at each end of the current leg. Both are set only
+    /// while the vehicle is matched to its route; otherwise the raw fixes are used.
+    private var fromDistance: CLLocationDistance?
+    private var toDistance: CLLocationDistance?
+
+    /// Whether the marker is being drawn on the route's path rather than at the
+    /// position the feed reported.
+    public var isMatchedToRoute: Bool { path != nil && fromDistance != nil && toDistance != nil }
+
+    public init(vehicle: Vehicle, now: Date = Date(), path: RoutePath? = nil) {
         self.vehicle = vehicle
         self.fromCoordinate = vehicle.coordinate
         self.toCoordinate = vehicle.coordinate
@@ -40,15 +65,33 @@ public struct VehicleTrack: Sendable {
         self.toHeading = vehicle.heading
         self.startedAt = now
         self.duration = 0
+        self.path = path
+        // No previous match to search around, so the whole path is considered.
+        if let match = path?.match(vehicle.coordinate), match.offset <= Self.maxMatchOffset {
+            fromDistance = match.distanceAlong
+            toDistance = match.distanceAlong
+        }
     }
 
     /// Retargets the animation at a fresh fix.
     ///
     /// The new leg starts from wherever the marker is *right now*, not from the
     /// previous fix, so an update arriving mid-glide does not snap backwards.
-    public mutating func update(with newVehicle: Vehicle, now: Date = Date(), over duration: TimeInterval) {
+    public mutating func update(
+        with newVehicle: Vehicle,
+        now: Date = Date(),
+        over duration: TimeInterval,
+        path newPath: RoutePath? = nil
+    ) {
         let current = coordinate(at: now)
         let currentHeading = heading(at: now)
+        let currentDistance = distanceAlong(at: now)
+        // A vehicle that reaches a terminus starts a new trip on a new path.
+        if newPath !== path {
+            path = newPath
+            fromDistance = nil
+            toDistance = nil
+        }
         let previousFix = vehicle.measuredAtSecondsSinceMidnight
         self.vehicle = newVehicle
 
@@ -70,11 +113,15 @@ public struct VehicleTrack: Sendable {
             isTeleport = jump > Self.teleportThresholdMeters
         }
 
+        let matched = match(newVehicle.coordinate, from: currentDistance)
+
         if isTeleport || duration <= 0 {
             fromCoordinate = newVehicle.coordinate
             toCoordinate = newVehicle.coordinate
             fromHeading = newVehicle.heading
             toHeading = newVehicle.heading
+            fromDistance = matched
+            toDistance = matched
             self.duration = 0
         } else {
             fromCoordinate = current
@@ -84,11 +131,50 @@ public struct VehicleTrack: Sendable {
             // so parked markers do not spin.
             toHeading = jump < 1 ? currentHeading : newVehicle.heading
             self.duration = duration
+            if let matched {
+                // The leg starts wherever the marker is now, or at the new fix if
+                // this is the first one to land on the path.
+                let start = currentDistance ?? matched
+                fromDistance = start
+                // Small backwards jitter at a standstill must not reverse the
+                // marker down the road.
+                toDistance = max(matched, start)
+            } else {
+                fromDistance = nil
+                toDistance = nil
+            }
         }
         startedAt = now
     }
 
+    /// The reported position placed on the route's path, when it can be believed.
+    private func match(
+        _ coordinate: CLLocationCoordinate2D,
+        from current: CLLocationDistance?
+    ) -> CLLocationDistance? {
+        guard let path else { return nil }
+        let nearby = path.match(coordinate, near: current, window: Self.matchWindow)
+        // Falling back to the whole path covers a vehicle rejoining its route
+        // after a diversion, and its first fix after the shape arrives.
+        let candidate = (nearby?.offset ?? .greatestFiniteMagnitude) <= Self.maxMatchOffset
+            ? nearby
+            : path.match(coordinate)
+        guard let candidate, candidate.offset <= Self.maxMatchOffset else { return nil }
+        if let current, candidate.distanceAlong < current - Self.maxBacktrack { return nil }
+        return candidate.distanceAlong
+    }
+
+    /// How far along its path the marker is right now, if it is on it.
+    private func distanceAlong(at time: Date) -> CLLocationDistance? {
+        guard let from = fromDistance, let to = toDistance else { return nil }
+        return from + (to - from) * progress(at: time)
+    }
+
     public func coordinate(at time: Date) -> CLLocationCoordinate2D {
+        if let path, let distance = distanceAlong(at: time),
+           let position = path.position(at: distance) {
+            return position.coordinate
+        }
         let fraction = progress(at: time)
         guard fraction < 1 else { return toCoordinate }
         return CLLocationCoordinate2D(
@@ -99,6 +185,12 @@ public struct VehicleTrack: Sendable {
     }
 
     public func heading(at time: Date) -> Double {
+        // On the path, the road's own direction is steadier than the feed's
+        // heading, which jitters while a vehicle is stopped.
+        if vehicle.speed >= 1, let path, let distance = distanceAlong(at: time),
+           let position = path.position(at: distance) {
+            return position.bearing
+        }
         let fraction = progress(at: time)
         guard fraction < 1 else { return toHeading }
         // Take the short way round so a 350 -> 10 turn does not spin 340 degrees.
